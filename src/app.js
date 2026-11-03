@@ -1,4 +1,5 @@
 import { conferirSenha, criarLimitador, criarSessao, encerrarSessao, usuarioDaSessao } from './auth.js';
+import { lerStatusBackup } from './backup.js';
 import { registrar } from './db.js';
 import { ErroDeUso } from './erros.js';
 import { criarUsuario, departamentosDoUsuario, listarUsuarios } from './escritorios.js';
@@ -37,7 +38,7 @@ async function lerJson(req) {
 }
 
 /** Monta o tratador HTTP do Hub sobre um banco já aberto. */
-export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false } = {}) {
+export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLogPath = null } = {}) {
   const limitador = criarLimitador();
   const atributosCookie = `Path=/; HttpOnly; SameSite=Strict${cookieSeguro ? '; Secure' : ''}`;
 
@@ -91,6 +92,7 @@ export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false } = {}) {
       if (rota === 'GET /api/departamentos') {
         return enviar(res, 200, db.prepare('SELECT chave, nome FROM departamentos WHERE tenant_id = ? ORDER BY nome').all(usuario.tenant_id));
       }
+      if (rota === 'GET /api/backup/status') return enviar(res, 200, lerStatusBackup(backupLogPath));
       if (rota === 'GET /api/registro') {
         return enviar(res, 200, db.prepare(`SELECT r.em, r.acao, r.detalhe, u.login FROM registro r
           LEFT JOIN usuarios u ON u.id = r.usuario_id WHERE r.tenant_id = ? ORDER BY r.id DESC LIMIT 100`).all(usuario.tenant_id));

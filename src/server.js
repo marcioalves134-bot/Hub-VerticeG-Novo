@@ -1,10 +1,10 @@
 import { createServer } from 'node:http';
-import { DB_PATH, HOST, PORTA, SESSAO_HORAS } from './config.js';
+import { BACKUP_LOG, DB_PATH, HOST, PORTA, SESSAO_HORAS } from './config.js';
 import { abrirBanco } from './db.js';
 import { criarApp } from './app.js';
 
 const db = abrirBanco(DB_PATH);
-const servidor = createServer(criarApp(db, { sessaoHoras: SESSAO_HORAS }));
+const servidor = createServer(criarApp(db, { sessaoHoras: SESSAO_HORAS, backupLogPath: BACKUP_LOG }));
 
 servidor.listen(PORTA, HOST, () => {
   console.log(`Hub Vértice G em http://${HOST}:${PORTA}`);

@@ -55,6 +55,7 @@ export const PAGINA_PAINEL = `<!DOCTYPE html>
 <main>
   <section class="cartao"><h2>Departamentos</h2><div class="deps" id="deps"></div></section>
   <div id="admin" hidden>
+    <section class="cartao" id="backup"><h2>Backup do Hub</h2><div id="backupTexto"></div></section>
     <section class="cartao"><h2>Usuários</h2>
       <table><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Departamentos</th><th>Situação</th></tr></thead><tbody id="usuarios"></tbody></table>
     </section>
@@ -88,8 +89,19 @@ async function api(caminho, opcoes) {
   return corpo;
 }
 
+function mostrarBackup(b) {
+  const caixa = document.getElementById('backupTexto');
+  const dataIso = (s) => new Date(s).toLocaleString('pt-BR');
+  let html = b.ultimoOkEm ? 'Último backup no servidor: <strong>' + dataIso(b.ultimoOkEm) + '</strong>.' : 'Nenhum backup automático enviado ao servidor ainda.';
+  if (b.ultimo && b.ultimo.resultado !== 'ok') html += '<br>Última tentativa (' + dataIso(b.ultimo.em) + '): ' + esc(b.ultimo.erro || b.ultimo.resultado) + '.';
+  if (b.ultimo && b.ultimo.pendentes) html += '<br>' + b.ultimo.pendentes + ' backup(s) aguardando envio na fila local.';
+  if (b.atrasado) html = '<span class="erro"><strong>Atenção:</strong> nenhum backup enviado ao servidor nas últimas 26 horas.</span><br>' + html;
+  caixa.innerHTML = html;
+}
+
 async function carregarAdmin() {
-  const [usuarios, registro, deps] = await Promise.all([api('/api/usuarios'), api('/api/registro'), api('/api/departamentos')]);
+  const [usuarios, registro, deps, backup] = await Promise.all([api('/api/usuarios'), api('/api/registro'), api('/api/departamentos'), api('/api/backup/status')]);
+  mostrarBackup(backup);
   document.getElementById('usuarios').innerHTML = usuarios.map((u) => '<tr><td>' + esc(u.nome) + '</td><td>' + esc(u.login)
     + '</td><td>' + (u.perfil === 'admin' ? 'Administrador' : 'Usuário') + '</td><td>'
     + (u.perfil === 'admin' ? 'Todos' : u.departamentos.map((d) => esc(d.nome) + ' (' + NIVEIS[d.nivel] + ')').join(', ') || '—')
