@@ -1,0 +1,12 @@
+# Segredos e configuração local
+.env
+
+# Dados do Hub (banco com dados de escritórios e usuários) — nunca no Git
+data/
+*.db
+*.db-wal
+*.db-shm
+*.zip
+
+node_modules/
+*.log
