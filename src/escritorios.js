@@ -72,6 +72,28 @@ export function alterarSituacaoUsuario(db, autor, usuarioId, ativo) {
   })();
 }
 
+/** Edita nome e perfil de um usuário do escritório de quem pede. Sem mudança, não grava nada. */
+export function editarUsuario(db, autor, usuarioId, { nome, perfil } = {}) {
+  if (typeof nome !== 'string' || !nome.trim()) throw new ErroDeUso('Informe o nome.');
+  if (!['admin', 'usuario'].includes(perfil)) throw new ErroDeUso('Perfil inválido.');
+  const novoNome = nome.trim();
+  return db.transaction(() => {
+    const alvo = db.prepare('SELECT id, nome, login, perfil, ativo FROM usuarios WHERE id = ? AND tenant_id = ?').get(usuarioId, autor.tenant_id);
+    if (!alvo) throw new ErroDeUso('Usuário não encontrado.', 404);
+    if (alvo.nome === novoNome && alvo.perfil === perfil) return;
+    if (alvo.perfil === 'admin' && perfil !== 'admin') {
+      if (alvo.id === autor.id) throw new ErroDeUso('Você não pode tirar o próprio perfil de administrador.');
+      const admins = db.prepare("SELECT COUNT(*) AS n FROM usuarios WHERE tenant_id = ? AND perfil = 'admin' AND ativo = 1").get(autor.tenant_id).n;
+      if (alvo.ativo && admins <= 1) throw new ErroDeUso('O escritório precisa de pelo menos um administrador ativo.');
+    }
+    db.prepare('UPDATE usuarios SET nome = ?, perfil = ? WHERE id = ? AND tenant_id = ?').run(novoNome, perfil, alvo.id, autor.tenant_id);
+    const antes = {}, depois = {};
+    if (alvo.nome !== novoNome) { antes.nome = alvo.nome; depois.nome = novoNome; }
+    if (alvo.perfil !== perfil) { antes.perfil = alvo.perfil; depois.perfil = perfil; }
+    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'usuario.editado', detalhe: { login: alvo.login, antes, depois } });
+  })();
+}
+
 export function listarUsuarios(db, tenantId) {
   const usuarios = db.prepare(`SELECT id, nome, login, perfil, ativo, criado_em FROM usuarios
     WHERE tenant_id = ? ORDER BY nome`).all(tenantId);
