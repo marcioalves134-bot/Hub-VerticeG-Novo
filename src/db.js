@@ -1,10 +1,13 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { aplicarMigracao001 } from './migracoes.js';
 
 // Multi-tenant: cada escritório é um tenant; toda tabela de dados tem tenant_id
 // e toda consulta das rotas filtra pelo tenant da sessão.
-const SCHEMA = `
+// Estrutura base (versão 0). Não acrescentar tabelas aqui: o que é novo entra só por migração (src/migracoes.js),
+// porque este texto roda a cada abertura e criaria tabelas em silêncio no banco existente.
+export const SCHEMA_BASE = `
 CREATE TABLE IF NOT EXISTS tenants (
   id         INTEGER PRIMARY KEY,
   codigo     TEXT NOT NULL UNIQUE,
@@ -68,7 +71,10 @@ export function abrirBanco(caminho) {
   const db = new Database(caminho);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
-  db.exec(SCHEMA);
+  const novo = db.prepare('SELECT COUNT(*) AS n FROM sqlite_master').get().n === 0;
+  db.exec(SCHEMA_BASE);
+  // Banco novo nasce na versão atual. Banco existente nunca é migrado aqui (só por comando explícito).
+  if (novo) aplicarMigracao001(db);
   return db;
 }
 

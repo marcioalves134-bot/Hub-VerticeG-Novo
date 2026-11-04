@@ -24,7 +24,7 @@ beforeEach(async () => {
     operacao: criarUsuario(db, adminA, { nome: 'Operação', login: 'operacao', senha: SENHA, departamentos: [{ chave: 'pessoal', nivel: 'operacao' }] }),
   };
   // departamento que só existe no escritório B
-  db.prepare("INSERT INTO departamentos (tenant_id, chave, nome) VALUES (?, 'contabil', 'Contábil')").run(tenantB);
+  db.prepare("INSERT INTO departamentos (tenant_id, chave, nome) VALUES (?, 'auditoria', 'Auditoria')").run(tenantB);
   servidor = createServer(criarApp(db));
   await new Promise((ok) => servidor.listen(0, '127.0.0.1', ok));
   base = `http://127.0.0.1:${servidor.address().port}`;
@@ -89,13 +89,13 @@ test('negadas entram no histórico; permitidas não', async () => {
 test('isolamento: departamento só de outro escritório responde "não encontrado" e não registra', async () => {
   const antes = totalRegistro();
   for (const login of ['admin', 'operacao']) {
-    const r = await pedir(await entrar('escritorio-a', login), 'GET', '/api/dep/contabil/x');
+    const r = await pedir(await entrar('escritorio-a', login), 'GET', '/api/dep/auditoria/x');
     assert.equal(r.status, 404);
     assert.deepEqual(r.corpo, NAO_EXISTE);
   }
   assert.equal(totalRegistro(), antes + 2, 'só os dois logins');
   // no escritório B o mesmo departamento existe e o administrador passa pela barreira
-  assert.deepEqual((await pedir(await entrar('escritorio-b', 'admin'), 'DELETE', '/api/dep/contabil/x')).corpo, PASSOU);
+  assert.deepEqual((await pedir(await entrar('escritorio-b', 'admin'), 'DELETE', '/api/dep/auditoria/x')).corpo, PASSOU);
 });
 
 test('isolamento: vínculo com "pessoal" de A não vale para o "pessoal" de B', async () => {

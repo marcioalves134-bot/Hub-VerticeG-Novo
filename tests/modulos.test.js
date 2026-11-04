@@ -1,8 +1,9 @@
 // Páginas dos módulos (GET /modulos/:chave). Banco em memória e servidor próprios por teste; dados fictícios.
+// Banco na versão 0 (igual ao real antes da migração 001): o departamento Contábil ainda não existe.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { abrirBanco } from '../src/db.js';
+import { abrirBancoVersao0 } from './banco-versao0.js';
 import { criarApp } from '../src/app.js';
 import { criarEscritorio, criarUsuario } from '../src/escritorios.js';
 
@@ -11,7 +12,7 @@ const TABELAS_ATUAIS = ['departamentos', 'registro', 'sessoes', 'tenants', 'usua
 let db, servidor, base, tenantA, tenantB, ids;
 
 beforeEach(async () => {
-  db = abrirBanco(':memory:');
+  db = abrirBancoVersao0();
   const a = criarEscritorio(db, { codigo: 'escritorio-a', nome: 'Escritório A (fictício)', admin: { nome: 'Admin A', login: 'admin', senha: SENHA } });
   const b = criarEscritorio(db, { codigo: 'escritorio-b', nome: 'Escritório B (fictício)', admin: { nome: 'Admin B', login: 'admin', senha: SENHA } });
   tenantA = a.tenantId; tenantB = b.tenantId;

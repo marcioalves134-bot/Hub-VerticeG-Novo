@@ -1,5 +1,6 @@
 import { DEPARTAMENTOS_INICIAIS, registrar } from './db.js';
 import { encerrarSessoesDoUsuario, gerarHashSenha } from './auth.js';
+import { criarItensMigracao001, versaoDoBanco } from './migracoes.js';
 import { ErroDeUso } from './erros.js';
 
 const CODIGO_VALIDO = /^[a-z0-9._-]{3,40}$/;
@@ -17,6 +18,8 @@ export function criarEscritorio(db, { codigo, nome, admin }) {
     const tenantId = db.prepare('INSERT INTO tenants (codigo, nome) VALUES (?, ?)').run(codigo, nome.trim()).lastInsertRowid;
     const dep = db.prepare('INSERT INTO departamentos (tenant_id, chave, nome) VALUES (?, ?, ?)');
     for (const d of DEPARTAMENTOS_INICIAIS) dep.run(tenantId, d.chave, d.nome);
+    // Banco já na versão 1 (novo ou migrado): também o departamento Contábil e o catálogo de serviços.
+    if (versaoDoBanco(db) >= 1) criarItensMigracao001(db, tenantId);
     const usuarioId = db.prepare(`INSERT INTO usuarios (tenant_id, nome, login, senha_hash, perfil)
       VALUES (?, ?, ?, ?, 'admin')`).run(tenantId, admin.nome.trim(), admin.login, senhaHash).lastInsertRowid;
     registrar(db, { tenantId, usuarioId, acao: 'escritorio.criado', detalhe: { codigo, nome: nome.trim() } });

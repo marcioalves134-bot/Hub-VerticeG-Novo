@@ -322,7 +322,9 @@ Gravado em `data/logs/migracao-001-<data-hora>.json` e resumido na tela: versão
 
 ### 7.8 Proteção enquanto o banco estiver na versão 0 (A-14)
 
-**Conferência feita sobre o código atual:** a aplicação consegue proteger todas as rotas e telas novas sem consultar tabelas inexistentes, desde que os cinco mecanismos abaixo sejam implementados juntos.
+**Conferência feita sobre o código atual:** a aplicação consegue proteger todas as rotas e telas novas sem consultar tabelas inexistentes, com os cinco mecanismos abaixo.
+
+**Quando cada mecanismo entra (revisado no diagnóstico da etapa 5):** M1 e M5 entram na etapa 5; M4 já funciona sem código novo. **M2 e M3 entram na etapa 9**, junto com as rotas de Clientes. Motivo: se M3 entrasse antes, depois da migração real (etapa 6) o menu mostraria "Clientes" apontando para uma página que só existe na etapa 10; e M2 só tem o que proteger quando as rotas existirem.
 
 | # | Mecanismo | Como funciona | Tabelas consultadas na versão 0 |
 |---|---|---|---|
@@ -336,7 +338,7 @@ Gravado em `data/logs/migracao-001-<data-hora>.json` e resumido na tela: versão
 
 **Ponto de atenção para a implementação:** toda rota ou tela futura que use `clientes`, `servicos` ou `cliente_servicos` precisa entrar na lista de caminhos da barreira M2. Para não depender de memória, a lista fica numa constante única e um teste percorre todas as rotas novas na versão 0 (abaixo).
 
-**Testes obrigatórios da versão 0** (banco montado com o auxiliar de 7.7, dados fictícios):
+**Testes obrigatórios da versão 0** (banco montado com o auxiliar de 7.7, dados fictícios; os itens de rotas novas, `/api/eu` e menu entram na etapa 9, com M2 e M3):
 
 - Cada rota nova (`GET/POST /api/clientes`, `GET/PUT /api/clientes/:id`, `POST /api/clientes/:id/situacao`, `POST /api/clientes/:id/servicos`, `POST /api/clientes/:id/servicos/:contrato/encerrar`, `GET/POST /api/servicos`, `PUT /api/servicos/:id`) e a página `GET /clientes`, com administrador e com usuário comum: **404**, nunca 500 — um 500 indicaria consulta a tabela inexistente. Também confere que nada foi escrito no console de erros.
 - Nenhuma dessas chamadas grava em `registro`.
@@ -371,16 +373,20 @@ Cada etapa: testes + commit próprio + aprovação. 🔒 = toca no banco real e 
 | 3 | Cartões do painel como atalhos; conferência no navegador | 2 | Não |
 | **Fase 2 — Base de Clientes (só bancos em memória)** | | | |
 | 4 | `src/documentos.js` (CPF, CNPJ numérico e alfanumérico, máscaras). **Começa pela conferência do algoritmo do CNPJ alfanumérico com a publicação oficial da Receita (A-16), apresentada para aprovação antes do código da validação de CNPJ** | — | Não |
-| 5 | Controle de versão em `abrirBanco` + `src/migracoes.js` (migração 001) + `npm run migrar` com todos os testes de 7.7; `criarEscritorio` conforme a versão; leitura da versão em `criarApp` e barreira de disponibilidade (7.8, M1–M5) com os testes da versão 0 | 4 | Não |
-| 6 | 🔒 **Migração 001 no banco real** — roteiro 7.5 | 5 + autorização | **Sim** |
+| 5a | Controle de versão em `abrirBanco` (`SCHEMA_BASE` + banco novo já na versão 1) + `src/migracoes.js` (estrutura, dados e validação da migração 001, sem comando); `criarEscritorio` conforme a versão (M5); auxiliar de banco versão 0 para testes; ajuste dos testes atuais | 4 | Não |
+| 5b | Comando `npm run migrar`: Hub fechado, backup conferido, ensaio em cópia, transação única e relatório (7.3–7.6), com os testes de 7.7 | 5a | Não |
+| 5c | Leitura da versão em `criarApp` (M1) e aviso no terminal ao iniciar o Hub na versão 0 | 5b | Não |
+| 6 | 🔒 **Migração 001 no banco real** — roteiro 7.5 | 5c + autorização | **Sim** |
 | 7 | `src/clientes.js` — cadastro, correção de documento, consulta, inativar/reativar | 6 | Não |
 | 8 | Serviços contratados e encerramento automático | 7 | Não |
 | **Fase 3 — Uso** | | | |
-| 9 | `exigirConsultaClientes` + rotas de clientes e catálogo (isolamento, permissões, pedidos inválidos, auditoria) | 8 | Não |
+| 9 | `exigirConsultaClientes` + rotas de clientes e catálogo (isolamento, permissões, pedidos inválidos, auditoria) + barreira de disponibilidade (M2) e `podeConsultarClientes` em `/api/eu` (M3), com os testes de rotas novas na versão 0 (7.8) | 8 | Não |
 | 10 | Tela `/clientes` + "Clientes" no menu; conferência no navegador | 9 | Não |
 | 11 | Atualizar `CLAUDE.md` (mapa, regra de migrações) e `README.md` | 10 | Não |
 
-**Nota da etapa 5:** depois desse commit, o Hub continua abrindo normalmente o banco real na versão 0, com Clientes e Contábil ocultos e indisponíveis (A-14, seção 7.8). A etapa 6 pode esperar o momento que o responsável escolher.
+**Nota da etapa 5 (5a–5c):** depois desses commits, o Hub continua abrindo normalmente o banco real na versão 0, com Contábil oculto e Clientes ainda inexistente (A-14, seção 7.8). A etapa 6 pode esperar o momento que o responsável escolher. Depois da etapa 6, o Contábil aparece no menu com a página "Em preparação"; "Clientes" só aparece na etapa 9.
+
+**Testes na etapa 5a:** como `abrirBanco` passa a criar bancos novos já na versão 1, os testes que conferem o comportamento da versão 0 usam o auxiliar `tests/banco-versao0.js`; nos demais, o departamento fictício que "só existe em outro escritório" passa de `contabil` para `auditoria`, porque `contabil` agora existe em todo escritório de teste.
 
 **Nota das etapas 7 a 10:** o código de clientes pode ser escrito e testado em bancos de teste na versão 1 mesmo antes da etapa 6; no banco real, ele só fica visível depois da migração, pela barreira M2. A ordem 6 → 7 continua recomendada para que a conferência no navegador (etapa 10) possa ser repetida no Hub real logo após a liberação.
 

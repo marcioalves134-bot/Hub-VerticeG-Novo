@@ -42,7 +42,7 @@ test('editar nome e perfil: vale na hora para a sessão aberta e registra antes/
   const comoAdmin = await eu(fulano);
   assert.equal(comoAdmin.nome, 'Fulano de Tal');
   assert.equal(comoAdmin.perfil, 'admin');
-  assert.deepEqual(comoAdmin.departamentos.map((d) => d.chave), ['fiscal', 'pessoal']);
+  assert.deepEqual(comoAdmin.departamentos.map((d) => d.chave), ['contabil', 'fiscal', 'pessoal']);
 
   const [r] = edicoes(tenantA);
   assert.equal(r.usuario_id, adminA.id);

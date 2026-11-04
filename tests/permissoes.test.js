@@ -30,7 +30,7 @@ beforeEach(() => {
   consulta = buscar(criarUsuario(db, adminA, { nome: 'Só Consulta', login: 'consulta', senha: SENHA, departamentos: [{ chave: 'pessoal', nivel: 'consulta' }] }));
   operacao = buscar(criarUsuario(db, adminA, { nome: 'Operação', login: 'operacao', senha: SENHA, departamentos: [{ chave: 'pessoal', nivel: 'operacao' }] }));
   // departamento que só existe no escritório B
-  db.prepare("INSERT INTO departamentos (tenant_id, chave, nome) VALUES (?, 'contabil', 'Contábil')").run(tenantB);
+  db.prepare("INSERT INTO departamentos (tenant_id, chave, nome) VALUES (?, 'auditoria', 'Auditoria')").run(tenantB);
 });
 
 afterEach(() => db.close());
@@ -94,10 +94,10 @@ test('isolamento: mesma chave em outro escritório devolve o departamento do pr�
 test('isolamento: departamento que só existe em outro escritório responde 404 e não registra', () => {
   const antes = totalRegistro();
   for (const u of [adminA, operacao]) {
-    assert.throws(() => exigirPermissao(db, u, 'contabil', 'ler'), (e) => e instanceof ErroDeUso && e.status === 404 && e.message === 'Departamento não encontrado.');
+    assert.throws(() => exigirPermissao(db, u, 'auditoria', 'ler'), (e) => e instanceof ErroDeUso && e.status === 404 && e.message === 'Departamento não encontrado.');
   }
   assert.equal(totalRegistro(), antes);
-  assert.equal(exigirPermissao(db, adminB, 'contabil', 'ler').chave, 'contabil');
+  assert.equal(exigirPermissao(db, adminB, 'auditoria', 'ler').chave, 'auditoria');
 });
 
 test('isolamento: vínculo inconsistente com departamento de outro escritório não dá acesso', () => {

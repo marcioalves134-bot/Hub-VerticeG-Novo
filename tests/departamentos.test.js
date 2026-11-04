@@ -19,7 +19,7 @@ beforeEach(async () => {
   fulanoId = criarUsuario(db, adminA, { nome: 'Fulano A', login: 'fulano', senha: SENHA, departamentos: [{ chave: 'pessoal', nivel: 'consulta' }] });
   sicranoBId = criarUsuario(db, adminB, { nome: 'Sicrano B', login: 'sicrano', senha: SENHA, departamentos: [{ chave: 'fiscal', nivel: 'operacao' }] });
   // departamento que só existe no escritório B
-  db.prepare("INSERT INTO departamentos (tenant_id, chave, nome) VALUES (?, 'contabil', 'Contábil')").run(tenantB);
+  db.prepare("INSERT INTO departamentos (tenant_id, chave, nome) VALUES (?, 'auditoria', 'Auditoria')").run(tenantB);
   servidor = createServer(criarApp(db));
   await new Promise((ok) => servidor.listen(0, '127.0.0.1', ok));
   base = `http://127.0.0.1:${servidor.address().port}`;
@@ -93,9 +93,9 @@ test('atômico: um item inválido no meio não altera nenhum vínculo', async ()
 
 test('isolamento: departamento que só existe em outro escritório é recusado', async () => {
   const { cookie: admin } = await entrar('escritorio-a', 'admin');
-  const r = await trocar(admin, fulanoId, { departamentos: [{ chave: 'contabil', nivel: 'consulta' }] });
+  const r = await trocar(admin, fulanoId, { departamentos: [{ chave: 'auditoria', nivel: 'consulta' }] });
   assert.equal(r.status, 400);
-  assert.match((await r.json()).erro, /Departamento desconhecido: contabil/);
+  assert.match((await r.json()).erro, /Departamento desconhecido: auditoria/);
   assert.deepEqual(vinculos(fulanoId), [{ chave: 'pessoal', tenant_id: tenantA, nivel: 'consulta' }]);
 });
 
