@@ -118,6 +118,22 @@ test('sessão: sair invalida o cookie; sessão vencida deixa de valer', async ()
   assert.equal(usuarioDaSessao(db, token, new Date('2026-01-01T01:00:01Z')), null);
 });
 
+test('roteador: rotas existentes respondem como antes; rota com id ainda não tem tratador', async () => {
+  const { cookie } = await entrar('escritorio-a', 'admin');
+  for (const caminho of ['/api/eu', '/api/usuarios', '/api/departamentos', '/api/registro', '/api/backup/status']) {
+    assert.equal((await chamar(cookie, caminho)).status, 200, caminho);
+  }
+  assert.equal((await fetch(`${base}/saude`)).status, 200);
+  assert.equal((await fetch(`${base}/login`)).status, 200);
+
+  const id = db.prepare("SELECT id FROM usuarios WHERE login = 'fulano'").get().id;
+  const r = await chamar(cookie, `/api/usuarios/${id}`);
+  assert.equal(r.status, 404);
+  assert.deepEqual(await r.json(), { erro: 'Rota não encontrada.' });
+  assert.equal((await fetch(`${base}/api/usuarios/${id}`)).status, 401);
+  assert.equal((await chamar((await entrar('escritorio-a', 'fulano')).cookie, `/api/usuarios/${id}`)).status, 403);
+});
+
 test('usuário desativado perde o acesso na hora', async () => {
   const { cookie } = await entrar('escritorio-a', 'fulano');
   db.prepare("UPDATE usuarios SET ativo = 0 WHERE login = 'fulano'").run();

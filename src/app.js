@@ -37,6 +37,27 @@ async function lerJson(req) {
   try { return JSON.parse(dados || '{}'); } catch { throw new ErroDeUso('JSON inválido.'); }
 }
 
+/**
+ * Compara a rota pedida ("PUT /api/usuarios/7") com um modelo ("PUT /api/usuarios/:id").
+ * Devolve os parâmetros ({ id: 7 }) ou null. Parâmetro só aceita inteiro positivo, sem zero à esquerda.
+ */
+export function casarRota(rota, modelo) {
+  const partes = rota.split('/');
+  const esperado = modelo.split('/');
+  if (partes.length !== esperado.length) return null;
+  const params = {};
+  for (let i = 0; i < esperado.length; i++) {
+    if (!esperado[i].startsWith(':')) {
+      if (partes[i] !== esperado[i]) return null;
+      continue;
+    }
+    const n = Number(partes[i]);
+    if (!/^[1-9]\d*$/.test(partes[i]) || !Number.isSafeInteger(n)) return null;
+    params[esperado[i].slice(1)] = n;
+  }
+  return params;
+}
+
 /** Monta o tratador HTTP do Hub sobre um banco já aberto. */
 export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLogPath = null } = {}) {
   const limitador = criarLimitador();
