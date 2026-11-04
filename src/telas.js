@@ -1,9 +1,15 @@
+import { MODULOS } from './modulos.js';
+
 const ESTILO = `
   :root { --azul: #1f4e79; --fundo: #f4f6f9; --borda: #d8dee6; --texto: #1d2733; --erro: #b42318; }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: var(--fundo); color: var(--texto); }
-  header { background: var(--azul); color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header { background: var(--azul); color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
   header h1 { font-size: 18px; margin: 0; }
+  .menu { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+  .menu a { color: #fff; text-decoration: none; padding: 6px 10px; border-radius: 6px; font-size: 14px; }
+  .menu a:hover, .menu a[aria-current="page"] { background: rgba(255, 255, 255, 0.18); }
+  @media (max-width: 640px) { .menu { order: 3; flex-basis: 100%; } }
   main { max-width: 1000px; margin: 20px auto; padding: 0 16px; }
   .cartao { background: #fff; border: 1px solid var(--borda); border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; }
   h2 { font-size: 16px; margin: 0 0 12px; }
@@ -51,12 +57,50 @@ document.getElementById('f').addEventListener('submit', async (ev) => {
 });
 </script></body></html>`;
 
-export const PAGINA_PAINEL = `<!DOCTYPE html>
+// Código comum das páginas logadas: cabeçalho, menu e Sair. O menu só esconde o que o usuário não pode abrir;
+// quem decide o acesso é sempre o servidor.
+const SCRIPT_LAYOUT = `
+const MODULOS = ${JSON.stringify(MODULOS)};
+
+function montarMenu(eu) {
+  const liberados = new Set(eu.departamentos.map((d) => d.chave));
+  const itens = [['/', 'Início']];
+  if (eu.podeConsultarClientes === true) itens.push(['/clientes', 'Clientes']);
+  for (const m of MODULOS) if (liberados.has(m.departamento)) itens.push(['/modulos/' + m.chave, m.titulo]);
+  menuPrincipal.innerHTML = itens.map(([href, texto]) => '<a href="' + href + '"'
+    + (location.pathname === href ? ' aria-current="page"' : '') + '>' + esc(texto) + '</a>').join('');
+}
+
+function preencherCabecalho(eu) {
+  document.getElementById('titulo').textContent = 'Hub Vértice G — ' + eu.escritorio;
+  document.getElementById('quem').textContent = eu.nome + (eu.perfil === 'admin' ? ' (administrador)' : '');
+  montarMenu(eu);
+}
+
+document.getElementById('sair').addEventListener('click', async () => {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login';
+});
+`;
+
+/** Esqueleto comum das páginas logadas: cabeçalho com menu, conteúdo e um único bloco de script. */
+function paginaComLayout({ titulo, conteudo, script }) {
+  return `<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hub Vértice G</title><style>${ESTILO}</style></head>
+<title>${titulo}</title><style>${ESTILO}</style></head>
 <body>
-<header><h1 id="titulo">Hub Vértice G</h1><div><span id="quem"></span> &nbsp; <button class="claro" id="sair">Sair</button></div></header>
+<header><h1 id="titulo">Hub Vértice G</h1><nav class="menu" id="menuPrincipal" aria-label="Menu principal"></nav><div><span id="quem"></span> &nbsp; <button class="claro" id="sair">Sair</button></div></header>
 <main>
+${conteudo}
+</main>
+<script>
+${ESCAPAR}
+${SCRIPT_LAYOUT}
+${script}
+</script></body></html>`;
+}
+
+export const PAGINA_PAINEL = paginaComLayout({ titulo: 'Hub Vértice G', conteudo: `
   <section class="cartao"><h2>Departamentos</h2><div class="deps" id="deps"></div></section>
   <div id="admin" hidden>
     <section class="cartao" id="backup"><h2>Backup do Hub</h2><div id="backupTexto"></div></section>
@@ -107,10 +151,7 @@ export const PAGINA_PAINEL = `<!DOCTYPE html>
     <section class="cartao"><h2>Registro de ações (últimas 100)</h2>
       <table><thead><tr><th>Quando</th><th>Usuário</th><th>Ação</th></tr></thead><tbody id="registro"></tbody></table>
     </section>
-  </div>
-</main>
-<script>
-${ESCAPAR}
+  </div>`, script: `
 const NIVEIS = { consulta: 'Consulta', operacao: 'Operação' };
 const dataBR = (s) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString('pt-BR');
 async function api(caminho, opcoes) {
@@ -240,17 +281,11 @@ document.getElementById('gSenha').addEventListener('submit', (ev) => {
 
 async function iniciar() {
   const eu = await api('/api/eu');
-  document.getElementById('titulo').textContent = 'Hub Vértice G — ' + eu.escritorio;
-  document.getElementById('quem').textContent = eu.nome + (eu.perfil === 'admin' ? ' (administrador)' : '');
+  preencherCabecalho(eu);
   document.getElementById('deps').innerHTML = eu.departamentos.map((d) => '<div class="dep"><strong>' + esc(d.nome)
     + '</strong><br><small>' + NIVEIS[d.nivel] + '</small></div>').join('') || '<p>Nenhum departamento liberado. Fale com o administrador.</p>';
   if (eu.perfil === 'admin') { document.getElementById('admin').hidden = false; await carregarAdmin(); }
 }
-
-document.getElementById('sair').addEventListener('click', async () => {
-  await fetch('/api/logout', { method: 'POST' });
-  location.href = '/login';
-});
 
 document.getElementById('novo').addEventListener('submit', async (ev) => {
   ev.preventDefault();
@@ -266,4 +301,4 @@ document.getElementById('novo').addEventListener('submit', async (ev) => {
 });
 
 iniciar();
-</script></body></html>`;
+` });

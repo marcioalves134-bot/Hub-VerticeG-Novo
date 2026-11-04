@@ -102,3 +102,98 @@ test('painel: edição de nome/perfil recusada volta os campos aos dados salvos 
   assert.equal(elementos.gDadosErro.textContent, 'Você não pode tirar o próprio perfil de administrador.');
   assert.equal(elementos.gDadosOk.textContent, '');
 });
+
+// --- Layout comum e menu (Etapa 1 da Fase 1) ---
+
+/** Roda o script do painel com elementos simulados e o /api/eu informado; devolve elementos e pedidos. */
+async function rodarPainel(eu) {
+  const elementos = {};
+  for (const [, id] of PAGINA_PAINEL.matchAll(/id="([A-Za-z]+)"/g)) {
+    const ouvintes = {};
+    elementos[id] = { value: '', textContent: '', innerHTML: '', hidden: false, className: '', dataset: {}, ouvintes,
+      addEventListener: (tipo, fn) => { ouvintes[tipo] = fn; }, scrollIntoView() {} };
+  }
+  const pedidos = [];
+  const respostas = {
+    'GET /api/eu': eu, 'GET /api/usuarios': [], 'GET /api/registro': [], 'GET /api/departamentos': [], 'GET /api/backup/status': {},
+    'POST /api/logout': { ok: true },
+  };
+  const fetch = async (caminho, opcoes = {}) => {
+    const chave = `${opcoes.method || 'GET'} ${caminho}`;
+    pedidos.push(chave);
+    return { status: 200, ok: true, json: async () => structuredClone(respostas[chave]) };
+  };
+  const location = { href: '', pathname: '/' };
+  const document = { getElementById: (id) => elementos[id], querySelectorAll: () => [] };
+  vm.runInContext(scriptDe(PAGINA_PAINEL), vm.createContext({ ...elementos, document, fetch, confirm: () => true, location }));
+  await new Promise((r) => setTimeout(r, 20));
+  return { elementos, pedidos, location };
+}
+
+const itensDoMenu = (elementos) => [...elementos.menuPrincipal.innerHTML.matchAll(/<a href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[2], m[1]]);
+const dep = (chave, nivel = 'consulta') => ({ chave, nome: chave, nivel });
+const euBase = { nome: 'Pessoa Teste', perfil: 'usuario', escritorio: 'Escritório A (fictício)' };
+
+test('layout: painel tem um único bloco de script, cabeçalho com menu e os ids de antes', () => {
+  assert.equal(PAGINA_PAINEL.match(/<script>/g).length, 1);
+  assert.equal(PAGINA_PAINEL.match(/<\/script>/g).length, 1);
+  assert.match(PAGINA_PAINEL, /<header><h1 id="titulo">Hub Vértice G<\/h1><nav class="menu" id="menuPrincipal" aria-label="Menu principal"><\/nav>/);
+  for (const id of ['titulo', 'quem', 'sair', 'deps', 'admin', 'backupTexto', 'usuarios', 'gerenciar', 'novo', 'registro']) {
+    assert.equal(PAGINA_PAINEL.split(`id="${id}"`).length - 1, 1, `id ${id} deve existir uma única vez`);
+  }
+});
+
+test('layout: a lista de módulos embutida na página é a de src/modulos.js', async () => {
+  const { MODULOS } = await import('../src/modulos.js');
+  assert.ok(scriptDe(PAGINA_PAINEL).includes(`const MODULOS = ${JSON.stringify(MODULOS)};`));
+});
+
+test('menu: administrador vê Início, Folha e Fiscal (Contábil não existe ainda)', async () => {
+  const { elementos } = await rodarPainel({ ...euBase, perfil: 'admin', departamentos: [dep('fiscal', 'operacao'), dep('pessoal', 'operacao')] });
+  assert.deepEqual(itensDoMenu(elementos), [['Início', '/'], ['Folha', '/modulos/folha'], ['Fiscal', '/modulos/fiscal']]);
+});
+
+test('menu: cada usuário vê só os módulos dos departamentos liberados', async () => {
+  const casos = [
+    [[dep('fiscal')], [['Início', '/'], ['Fiscal', '/modulos/fiscal']]],
+    [[dep('pessoal', 'operacao')], [['Início', '/'], ['Folha', '/modulos/folha']]],
+    [[], [['Início', '/']]],
+  ];
+  for (const [departamentos, esperado] of casos) {
+    const { elementos } = await rodarPainel({ ...euBase, departamentos });
+    assert.deepEqual(itensDoMenu(elementos), esperado, JSON.stringify(departamentos));
+  }
+});
+
+test('menu: Contábil aparece quando o departamento existir; Clientes só com permissão informada pelo servidor', async () => {
+  const comContabil = await rodarPainel({ ...euBase, departamentos: [dep('contabil'), dep('fiscal')] });
+  assert.deepEqual(itensDoMenu(comContabil.elementos), [['Início', '/'], ['Fiscal', '/modulos/fiscal'], ['Contábil', '/modulos/contabil']]);
+
+  const comClientes = await rodarPainel({ ...euBase, departamentos: [dep('fiscal')], podeConsultarClientes: true });
+  assert.deepEqual(itensDoMenu(comClientes.elementos), [['Início', '/'], ['Clientes', '/clientes'], ['Fiscal', '/modulos/fiscal']]);
+  for (const valor of [false, 'true', 1, undefined]) {
+    const { elementos } = await rodarPainel({ ...euBase, departamentos: [], podeConsultarClientes: valor });
+    assert.deepEqual(itensDoMenu(elementos), [['Início', '/']], String(valor));
+  }
+});
+
+test('menu: página atual marcada e texto dos itens escapado', async () => {
+  const { elementos } = await rodarPainel({ ...euBase, departamentos: [dep('fiscal')] });
+  assert.match(elementos.menuPrincipal.innerHTML, /<a href="\/" aria-current="page">Início<\/a>/);
+  assert.doesNotMatch(elementos.menuPrincipal.innerHTML, /href="\/modulos\/fiscal" aria-current/);
+});
+
+test('cabeçalho e Sair continuam funcionando como antes', async () => {
+  const comum = await rodarPainel({ ...euBase, departamentos: [] });
+  assert.equal(comum.elementos.titulo.textContent, 'Hub Vértice G — Escritório A (fictício)');
+  assert.equal(comum.elementos.quem.textContent, 'Pessoa Teste');
+  assert.ok(!comum.pedidos.includes('GET /api/usuarios'), 'usuário comum não carrega a administração');
+
+  const admin = await rodarPainel({ ...euBase, perfil: 'admin', departamentos: [] });
+  assert.equal(admin.elementos.quem.textContent, 'Pessoa Teste (administrador)');
+  assert.ok(admin.pedidos.includes('GET /api/usuarios'), 'administrador carrega a administração');
+
+  await admin.elementos.sair.ouvintes.click();
+  assert.equal(admin.pedidos.at(-1), 'POST /api/logout');
+  assert.equal(admin.location.href, '/login');
+});
