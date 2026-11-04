@@ -4,6 +4,7 @@ import { registrar } from './db.js';
 import { ErroDeUso } from './erros.js';
 import { alterarSituacaoUsuario, criarUsuario, departamentosDoUsuario, editarDepartamentosUsuario, editarUsuario, listarUsuarios, redefinirSenha } from './escritorios.js';
 import { MODULOS } from './modulos.js';
+import { versaoDoBanco, VERSAO_ATUAL } from './migracoes.js';
 import { exigirPermissao } from './permissoes.js';
 import { PAGINA_LOGIN, PAGINA_PAINEL } from './telas.js';
 import { paginaModulo, paginaModuloNaoEncontrado, paginaSemAcesso } from './telas-modulos.js';
@@ -74,8 +75,12 @@ export function casarRota(rota, modelo) {
 export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLogPath = null } = {}) {
   const limitador = criarLimitador();
   const atributosCookie = `Path=/; HttpOnly; SameSite=Strict${cookieSeguro ? '; Secure' : ''}`;
+  // Versão do banco lida uma vez: a migração só roda com o Hub fechado; ao reabrir, a versão nova é lida.
+  // Recursos que dependem da migração 001 (Clientes) só ficam disponíveis na versão 1 (usado a partir da etapa 9).
+  const versaoBanco = versaoDoBanco(db);
+  const recursos = { clientes: versaoBanco >= 1 };
 
-  return async function tratar(req, res) {
+  const tratar = async function tratar(req, res) {
     const url = new URL(req.url, 'http://hub');
     const rota = `${req.method} ${url.pathname}`;
     try {
@@ -186,4 +191,18 @@ export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLog
       return enviar(res, 500, { erro: 'Erro interno.' });
     }
   };
+  tratar.versaoBanco = versaoBanco;
+  tratar.recursos = recursos;
+  return tratar;
+}
+
+/** Aviso para o terminal quando o banco está atrás da versão do código; null se estiver em dia. Não bloqueia nada. */
+export function avisoVersaoBanco(versao) {
+  if (versao >= VERSAO_ATUAL) return null;
+  return [
+    `ATENÇÃO: o banco está na versão ${versao}; esta versão do Hub usa a versão ${VERSAO_ATUAL}.`,
+    'A migração 001 está pendente: Clientes e o módulo Contábil ficam indisponíveis até ela ser aplicada.',
+    'O Hub funciona normalmente com o que já existe. Nada é migrado automaticamente.',
+    'Para migrar, somente com autorização: feche o Hub, rode "npm run backup" e depois "npm run migrar".',
+  ].join('\n');
 }

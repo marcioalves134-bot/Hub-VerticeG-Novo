@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
 import { BACKUP_LOG, DB_PATH, HOST, PORTA, SESSAO_HORAS } from './config.js';
 import { abrirBanco } from './db.js';
-import { criarApp } from './app.js';
+import { avisoVersaoBanco, criarApp } from './app.js';
 
 const db = abrirBanco(DB_PATH);
-const servidor = createServer(criarApp(db, { sessaoHoras: SESSAO_HORAS, backupLogPath: BACKUP_LOG }));
+const app = criarApp(db, { sessaoHoras: SESSAO_HORAS, backupLogPath: BACKUP_LOG });
+const servidor = createServer(app);
 
 servidor.listen(PORTA, HOST, () => {
   console.log(`Hub Vértice G em http://${HOST}:${PORTA}`);
@@ -12,6 +13,8 @@ servidor.listen(PORTA, HOST, () => {
   if (!db.prepare('SELECT 1 FROM tenants LIMIT 1').get()) {
     console.log('Nenhum escritório cadastrado ainda. Rode: npm run criar-escritorio');
   }
+  const aviso = avisoVersaoBanco(app.versaoBanco);
+  if (aviso) console.warn(`\n${aviso}\n`);
 });
 
 for (const sinal of ['SIGINT', 'SIGTERM']) {
