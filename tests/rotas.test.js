@@ -30,3 +30,25 @@ test('rota com id: recusa id que não é inteiro positivo', () => {
     assert.equal(casarRota(`PUT /api/usuarios/${id}`, MODELO), null, `id "${id}" deveria ser recusado`);
   }
 });
+
+test('rota com chave de departamento: reconhece chave válida, sozinha ou com id', () => {
+  assert.deepEqual(casarRota('GET /api/dep/pessoal/funcionarios', 'GET /api/dep/:chave/funcionarios'), { chave: 'pessoal' });
+  assert.deepEqual(casarRota('GET /api/dep/fiscal', 'GET /api/dep/:chave'), { chave: 'fiscal' });
+  assert.deepEqual(casarRota('PUT /api/dep/dp_2/itens/7', 'PUT /api/dep/:chave/itens/:id'), { chave: 'dp_2', id: 7 });
+  assert.deepEqual(casarRota('GET /api/dep/a-b/x', 'GET /api/dep/:chave/x'), { chave: 'a-b' });
+  assert.deepEqual(casarRota(`GET /api/dep/${'a'.repeat(40)}/x`, 'GET /api/dep/:chave/x'), { chave: 'a'.repeat(40) });
+});
+
+test('rota com chave de departamento: recusa chave inválida', () => {
+  const modelo = 'GET /api/dep/:chave/funcionarios';
+  for (const chave of ['', 'PESSOAL', 'Pessoal', 'pes.soal', 'pes soal', '%70essoal', 'pessoal%2Ffiscal', 'açaí', 'a'.repeat(41), '..']) {
+    assert.equal(casarRota(`GET /api/dep/${chave}/funcionarios`, modelo), null, `chave "${chave}" deveria ser recusada`);
+  }
+  assert.equal(casarRota('GET /api/dep/pessoal/outra', modelo), null);
+  assert.equal(casarRota('GET /api/dep/pessoal/funcionarios/1', modelo), null);
+});
+
+test('rota com id continua só aceitando número (chave não vale como id)', () => {
+  assert.equal(casarRota('PUT /api/usuarios/pessoal', 'PUT /api/usuarios/:id'), null);
+  assert.equal(casarRota('PUT /api/dep/pessoal/itens/abc', 'PUT /api/dep/:chave/itens/:id'), null);
+});

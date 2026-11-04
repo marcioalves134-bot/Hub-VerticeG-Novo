@@ -3,10 +3,14 @@ import { lerStatusBackup } from './backup.js';
 import { registrar } from './db.js';
 import { ErroDeUso } from './erros.js';
 import { alterarSituacaoUsuario, criarUsuario, departamentosDoUsuario, editarDepartamentosUsuario, editarUsuario, listarUsuarios, redefinirSenha } from './escritorios.js';
+import { exigirPermissao } from './permissoes.js';
 import { PAGINA_LOGIN, PAGINA_PAINEL } from './telas.js';
 
 const COOKIE = 'hub_sessao';
 const LIMITE_CORPO = 10_000;
+const CHAVE_DEPARTAMENTO = /^[a-z0-9_-]{1,40}$/;
+// Rotas de departamento: o método define o que a permissão precisa cobrir.
+const ACAO_POR_METODO = { GET: 'ler', POST: 'gravar', PUT: 'gravar', DELETE: 'excluir' };
 
 const CABECALHOS = {
   'X-Content-Type-Options': 'nosniff',
@@ -39,7 +43,8 @@ async function lerJson(req) {
 
 /**
  * Compara a rota pedida ("PUT /api/usuarios/7") com um modelo ("PUT /api/usuarios/:id").
- * Devolve os parâmetros ({ id: 7 }) ou null. Parâmetro só aceita inteiro positivo, sem zero à esquerda.
+ * Devolve os parâmetros ({ id: 7 }) ou null. ":chave" aceita a chave de um departamento (minúsculas, números, - e _);
+ * qualquer outro parâmetro só aceita inteiro positivo, sem zero à esquerda.
  */
 export function casarRota(rota, modelo) {
   const partes = rota.split('/');
@@ -49,6 +54,11 @@ export function casarRota(rota, modelo) {
   for (let i = 0; i < esperado.length; i++) {
     if (!esperado[i].startsWith(':')) {
       if (partes[i] !== esperado[i]) return null;
+      continue;
+    }
+    if (esperado[i] === ':chave') {
+      if (!CHAVE_DEPARTAMENTO.test(partes[i])) return null;
+      params.chave = partes[i];
       continue;
     }
     const n = Number(partes[i]);
@@ -102,6 +112,16 @@ export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLog
         return enviar(res, 200, { ok: true }, undefined, { 'Set-Cookie': `${COOKIE}=; ${atributosCookie}; Max-Age=0` });
       }
       if (rota === 'GET /api/eu') return enviar(res, 200, { ...usuario, departamentos: departamentosDoUsuario(db, usuario) });
+
+      // Rotas de departamento (/api/dep/:chave/...): toda chamada passa pela permissão antes de qualquer tratador.
+      if (url.pathname.startsWith('/api/dep/')) {
+        const chave = url.pathname.split('/')[3];
+        const acao = ACAO_POR_METODO[req.method];
+        if (!CHAVE_DEPARTAMENTO.test(chave) || !acao) return enviar(res, 404, { erro: 'Rota não encontrada.' });
+        exigirPermissao(db, usuario, chave, acao);
+        // Os tratadores das funcionalidades de departamento entram aqui.
+        return enviar(res, 404, { erro: 'Rota não encontrada.' });
+      }
 
       // Daqui para baixo, só administrador do próprio escritório.
       if (usuario.perfil !== 'admin') return enviar(res, 403, { erro: 'Acesso só para administrador.' });
