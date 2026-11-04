@@ -1,5 +1,5 @@
 import { DEPARTAMENTOS_INICIAIS, registrar } from './db.js';
-import { gerarHashSenha } from './auth.js';
+import { encerrarSessoesDoUsuario, gerarHashSenha } from './auth.js';
 import { ErroDeUso } from './erros.js';
 
 const CODIGO_VALIDO = /^[a-z0-9._-]{3,40}$/;
@@ -47,6 +47,28 @@ export function criarUsuario(db, autor, { nome, login, senha, perfil = 'usuario'
     }
     registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'usuario.criado', detalhe: { login, perfil, departamentos } });
     return Number(id);
+  })();
+}
+
+/**
+ * Desativa (ativo = false) ou reativa (ativo = true) um usuário do escritório de quem pede.
+ * O cadastro e o histórico ficam; as sessões abertas do usuário são encerradas.
+ */
+export function alterarSituacaoUsuario(db, autor, usuarioId, ativo) {
+  if (typeof ativo !== 'boolean') throw new ErroDeUso('Situação inválida.');
+  return db.transaction(() => {
+    const alvo = db.prepare('SELECT id, login, perfil, ativo FROM usuarios WHERE id = ? AND tenant_id = ?').get(usuarioId, autor.tenant_id);
+    if (!alvo) throw new ErroDeUso('Usuário não encontrado.', 404);
+    if (Boolean(alvo.ativo) === ativo) throw new ErroDeUso(ativo ? 'O usuário já está ativo.' : 'O usuário já está inativo.');
+    if (!ativo && alvo.id === autor.id) throw new ErroDeUso('Você não pode desativar o próprio usuário.');
+    if (!ativo && alvo.perfil === 'admin') {
+      const admins = db.prepare("SELECT COUNT(*) AS n FROM usuarios WHERE tenant_id = ? AND perfil = 'admin' AND ativo = 1").get(autor.tenant_id).n;
+      if (admins <= 1) throw new ErroDeUso('O escritório precisa de pelo menos um administrador ativo.');
+    }
+    db.prepare('UPDATE usuarios SET ativo = ? WHERE id = ? AND tenant_id = ?').run(ativo ? 1 : 0, alvo.id, autor.tenant_id);
+    const sessoesEncerradas = encerrarSessoesDoUsuario(db, alvo.id, autor.tenant_id);
+    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: ativo ? 'usuario.reativado' : 'usuario.desativado',
+      detalhe: { login: alvo.login, sessoesEncerradas } });
   })();
 }
 
