@@ -2,7 +2,7 @@ import { conferirSenha, criarLimitador, criarSessao, encerrarSessao, usuarioDaSe
 import { lerStatusBackup } from './backup.js';
 import { registrar } from './db.js';
 import { ErroDeUso } from './erros.js';
-import { alterarSituacaoUsuario, criarUsuario, departamentosDoUsuario, editarUsuario, listarUsuarios } from './escritorios.js';
+import { alterarSituacaoUsuario, criarUsuario, departamentosDoUsuario, editarDepartamentosUsuario, editarUsuario, listarUsuarios } from './escritorios.js';
 import { PAGINA_LOGIN, PAGINA_PAINEL } from './telas.js';
 
 const COOKIE = 'hub_sessao';
@@ -119,6 +119,12 @@ export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLog
       const edicao = casarRota(rota, 'PUT /api/usuarios/:id');
       if (edicao) {
         editarUsuario(db, usuario, edicao.id, await lerJson(req));
+        return enviar(res, 200, { ok: true });
+      }
+      const vinculos = casarRota(rota, 'PUT /api/usuarios/:id/departamentos');
+      if (vinculos) {
+        const { departamentos } = await lerJson(req);
+        editarDepartamentosUsuario(db, usuario, vinculos.id, departamentos);
         return enviar(res, 200, { ok: true });
       }
       if (rota === 'GET /api/departamentos') {

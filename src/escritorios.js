@@ -94,6 +94,33 @@ export function editarUsuario(db, autor, usuarioId, { nome, perfil } = {}) {
   })();
 }
 
+/** Troca todos os departamentos de um usuário do escritório de quem pede. Sem mudança, não grava nada. */
+export function editarDepartamentosUsuario(db, autor, usuarioId, departamentos) {
+  if (!Array.isArray(departamentos)) throw new ErroDeUso('Departamentos inválidos.');
+  return db.transaction(() => {
+    const alvo = db.prepare('SELECT id, login FROM usuarios WHERE id = ? AND tenant_id = ?').get(usuarioId, autor.tenant_id);
+    if (!alvo) throw new ErroDeUso('Usuário não encontrado.', 404);
+    const buscaDep = db.prepare('SELECT id FROM departamentos WHERE tenant_id = ? AND chave = ?');
+    const novos = [];
+    for (const item of departamentos) {
+      const { chave, nivel } = item ?? {};
+      const dep = typeof chave === 'string' && buscaDep.get(autor.tenant_id, chave);
+      if (!dep) throw new ErroDeUso(`Departamento desconhecido: ${chave}`);
+      if (!['consulta', 'operacao'].includes(nivel)) throw new ErroDeUso('Nível inválido.');
+      if (novos.some((n) => n.chave === chave)) throw new ErroDeUso(`Departamento repetido: ${chave}`);
+      novos.push({ id: dep.id, chave, nivel });
+    }
+    const antes = db.prepare(`SELECT d.chave, ud.nivel FROM usuario_departamentos ud
+      JOIN departamentos d ON d.id = ud.departamento_id WHERE ud.usuario_id = ? AND d.tenant_id = ? ORDER BY d.chave`).all(alvo.id, autor.tenant_id);
+    const depois = novos.map(({ chave, nivel }) => ({ chave, nivel })).sort((a, b) => (a.chave < b.chave ? -1 : 1));
+    if (JSON.stringify(antes) === JSON.stringify(depois)) return;
+    db.prepare('DELETE FROM usuario_departamentos WHERE usuario_id = ?').run(alvo.id);
+    const vincula = db.prepare('INSERT INTO usuario_departamentos (usuario_id, departamento_id, nivel) VALUES (?, ?, ?)');
+    for (const n of novos) vincula.run(alvo.id, n.id, n.nivel);
+    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'usuario.departamentos', detalhe: { login: alvo.login, antes, depois } });
+  })();
+}
+
 export function listarUsuarios(db, tenantId) {
   const usuarios = db.prepare(`SELECT id, nome, login, perfil, ativo, criado_em FROM usuarios
     WHERE tenant_id = ? ORDER BY nome`).all(tenantId);
