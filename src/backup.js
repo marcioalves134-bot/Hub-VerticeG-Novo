@@ -47,7 +47,7 @@ function comPrazo(promessa, ms, falha) {
     .finally(() => clearTimeout(relogio));
 }
 
-const contagens = (db) => Object.fromEntries(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+export const contagens = (db) => Object.fromEntries(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
   .all().map(({ name }) => [name, db.prepare(`SELECT COUNT(*) AS n FROM "${name}"`).get().n]));
 
 async function espacoLivrePadrao(pasta) {

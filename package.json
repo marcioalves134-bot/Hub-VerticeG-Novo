@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "criar-escritorio": "node src/cli/criar-escritorio.js",
     "backup": "node src/cli/backup.js",
+    "migrar": "node src/cli/migrar.js",
     "test": "node --test --test-concurrency=1 \"tests/*.test.js\""
   },
   "dependencies": {
