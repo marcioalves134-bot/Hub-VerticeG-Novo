@@ -53,6 +53,11 @@ export function encerrarSessao(db, token) {
   if (token) db.prepare('DELETE FROM sessoes WHERE token_hash = ?').run(hashToken(token));
 }
 
+/** Encerra todas as sessões do usuário, só dentro do escritório informado. Devolve quantas foram encerradas. */
+export function encerrarSessoesDoUsuario(db, usuarioId, tenantId) {
+  return db.prepare('DELETE FROM sessoes WHERE usuario_id = ? AND tenant_id = ?').run(usuarioId, tenantId).changes;
+}
+
 /** Bloqueio simples por login: 5 erros seguidos → 15 minutos de espera. */
 export function criarLimitador({ maxErros = 5, esperaMs = 15 * 60_000 } = {}) {
   const erros = new Map();
