@@ -20,6 +20,10 @@ const ESTILO = `
   .grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 16px; }
   .linha-dep { display: flex; gap: 8px; align-items: center; font-size: 13px; margin-top: 6px; }
   .linha-dep select { width: auto; }
+  button.pequeno { margin: 0; padding: 4px 10px; font-size: 13px; }
+  button.perigo { background: var(--erro); }
+  .bloco { border-top: 1px solid var(--borda); margin-top: 16px; padding-top: 4px; }
+  .dica { font-size: 12px; color: #555; margin: 4px 0; }
 `;
 
 const ESCAPAR = `const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));`;
@@ -57,7 +61,35 @@ export const PAGINA_PAINEL = `<!DOCTYPE html>
   <div id="admin" hidden>
     <section class="cartao" id="backup"><h2>Backup do Hub</h2><div id="backupTexto"></div></section>
     <section class="cartao"><h2>Usuários</h2>
-      <table><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Departamentos</th><th>Situação</th></tr></thead><tbody id="usuarios"></tbody></table>
+      <table><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Departamentos</th><th>Situação</th><th>Ações</th></tr></thead><tbody id="usuarios"></tbody></table>
+    </section>
+    <section class="cartao" id="gerenciar" hidden><h2 id="gTitulo">Gerenciar usuário</h2>
+      <form id="gDados">
+        <div class="grade">
+          <div><label for="gNome">Nome</label><input id="gNome" required></div>
+          <div><label for="gPerfil">Perfil</label><select id="gPerfil"><option value="usuario">Usuário</option><option value="admin">Administrador</option></select></div>
+        </div>
+        <button type="submit">Salvar nome e perfil</button>
+        <div class="erro" id="gDadosErro"></div><div class="ok" id="gDadosOk"></div>
+      </form>
+      <form id="gDeps" class="bloco">
+        <label>Acesso por departamento</label>
+        <p class="dica">Administrador vê todos os departamentos; estes acessos valem quando o perfil é Usuário.</p>
+        <div id="gDepsLista"></div>
+        <button type="submit">Salvar departamentos</button>
+        <div class="erro" id="gDepsErro"></div><div class="ok" id="gDepsOk"></div>
+      </form>
+      <div class="bloco">
+        <label>Situação: <strong id="gSituacao"></strong></label>
+        <button type="button" id="gSituacaoBotao"></button>
+        <div class="erro" id="gSituacaoErro"></div><div class="ok" id="gSituacaoOk"></div>
+      </div>
+      <form id="gSenha" class="bloco">
+        <label for="gNovaSenha">Nova senha (mín. 10 caracteres)</label><input id="gNovaSenha" type="password" autocomplete="new-password" required>
+        <button type="submit">Redefinir senha</button>
+        <div class="erro" id="gSenhaErro"></div><div class="ok" id="gSenhaOk"></div>
+      </form>
+      <div class="bloco"><button type="button" id="gFechar">Fechar</button></div>
     </section>
     <section class="cartao"><h2>Novo usuário</h2>
       <form id="novo">
@@ -99,19 +131,112 @@ function mostrarBackup(b) {
   caixa.innerHTML = html;
 }
 
+let usuariosCache = [], depsCache = [], gId = null;
+
 async function carregarAdmin() {
   const [usuarios, registro, deps, backup] = await Promise.all([api('/api/usuarios'), api('/api/registro'), api('/api/departamentos'), api('/api/backup/status')]);
+  usuariosCache = usuarios; depsCache = deps;
   mostrarBackup(backup);
   document.getElementById('usuarios').innerHTML = usuarios.map((u) => '<tr><td>' + esc(u.nome) + '</td><td>' + esc(u.login)
     + '</td><td>' + (u.perfil === 'admin' ? 'Administrador' : 'Usuário') + '</td><td>'
     + (u.perfil === 'admin' ? 'Todos' : u.departamentos.map((d) => esc(d.nome) + ' (' + NIVEIS[d.nivel] + ')').join(', ') || '—')
-    + '</td><td>' + (u.ativo ? 'Ativo' : 'Inativo') + '</td></tr>').join('');
+    + '</td><td>' + (u.ativo ? 'Ativo' : 'Inativo') + '</td><td><button type="button" class="pequeno" data-gerenciar="' + u.id + '">Gerenciar</button></td></tr>').join('');
+  if (gId !== null) preencherGerenciar();
   document.getElementById('registro').innerHTML = registro.map((r) => '<tr><td>' + dataBR(r.em) + '</td><td>' + esc(r.login || '—')
     + '</td><td>' + esc(r.acao) + '</td></tr>').join('');
   document.getElementById('nDeps').innerHTML = deps.map((d) => '<div class="linha-dep"><span style="min-width:140px">' + esc(d.nome)
     + '</span><select data-dep="' + esc(d.chave) + '"><option value="">Sem acesso</option><option value="consulta">Consulta</option>'
     + '<option value="operacao">Operação</option></select></div>').join('');
 }
+
+// Gerenciar usuário: a tela só envia os pedidos; as regras e as mensagens de erro vêm do servidor.
+const usuarioAberto = () => usuariosCache.find((u) => u.id === gId);
+
+function preencherGerenciar() {
+  const u = usuarioAberto();
+  if (!u) { fecharGerenciar(); return; }
+  gTitulo.textContent = 'Gerenciar usuário — ' + u.nome + ' (' + u.login + ')';
+  gNome.value = u.nome;
+  gPerfil.value = u.perfil;
+  const nivelDe = Object.fromEntries(u.departamentos.map((d) => [d.chave, d.nivel]));
+  gDepsLista.innerHTML = depsCache.map((d) => '<div class="linha-dep"><span style="min-width:140px">' + esc(d.nome)
+    + '</span><select data-dep="' + esc(d.chave) + '">' + ['', 'consulta', 'operacao'].map((v) => '<option value="' + v + '"'
+    + ((nivelDe[d.chave] || '') === v ? ' selected' : '') + '>' + (v ? NIVEIS[v] : 'Sem acesso') + '</option>').join('') + '</select></div>').join('');
+  gSituacao.textContent = u.ativo ? 'Ativo' : 'Inativo';
+  gSituacaoBotao.textContent = u.ativo ? 'Desativar' : 'Reativar';
+  gSituacaoBotao.className = u.ativo ? 'perigo' : '';
+}
+
+function limparMensagensGerenciar() {
+  for (const p of ['gDados', 'gDeps', 'gSituacao', 'gSenha']) {
+    document.getElementById(p + 'Erro').textContent = '';
+    document.getElementById(p + 'Ok').textContent = '';
+  }
+}
+
+function fecharGerenciar() {
+  gId = null;
+  gNovaSenha.value = '';
+  document.getElementById('gerenciar').hidden = true;
+}
+
+/** Envia uma ação do cartão "Gerenciar usuário" e mostra o resultado no bloco dela. Devolve se deu certo. */
+async function acaoGerenciar(bloco, metodo, sufixo, corpo, mensagemOk) {
+  const erro = document.getElementById(bloco + 'Erro'), ok = document.getElementById(bloco + 'Ok');
+  erro.textContent = ''; ok.textContent = '';
+  try {
+    await api('/api/usuarios/' + gId + sufixo, { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+  } catch (e) { erro.textContent = e.message; return false; }
+  ok.textContent = mensagemOk;
+  await carregarAdmin();
+  return true;
+}
+
+document.getElementById('usuarios').addEventListener('click', (ev) => {
+  const botao = ev.target.closest('button[data-gerenciar]');
+  if (!botao) return;
+  gId = Number(botao.dataset.gerenciar);
+  gNovaSenha.value = '';
+  limparMensagensGerenciar();
+  preencherGerenciar();
+  document.getElementById('gerenciar').hidden = false;
+  document.getElementById('gerenciar').scrollIntoView();
+});
+
+document.getElementById('gFechar').addEventListener('click', fecharGerenciar);
+
+document.getElementById('gDados').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const id = gId;
+  if (await acaoGerenciar('gDados', 'PUT', '', { nome: gNome.value, perfil: gPerfil.value }, 'Nome e perfil salvos.')) return;
+  // Recusado: os campos voltam aos dados realmente salvos; a mensagem de erro continua.
+  const salvo = (await api('/api/usuarios')).find((u) => u.id === id);
+  if (salvo && gId === id) { gNome.value = salvo.nome; gPerfil.value = salvo.perfil; }
+});
+
+document.getElementById('gDeps').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const departamentos = [...document.querySelectorAll('#gDepsLista select')].filter((s) => s.value).map((s) => ({ chave: s.dataset.dep, nivel: s.value }));
+  acaoGerenciar('gDeps', 'PUT', '/departamentos', { departamentos }, 'Departamentos salvos.');
+});
+
+gSituacaoBotao.addEventListener('click', () => {
+  const u = usuarioAberto();
+  if (!u) return;
+  const ativo = !u.ativo;
+  const pergunta = ativo ? 'Reativar ' + u.nome + '?' : 'Desativar ' + u.nome + '? As sessões abertas deste usuário serão encerradas.';
+  if (!confirm(pergunta)) return;
+  acaoGerenciar('gSituacao', 'POST', '/situacao', { ativo }, ativo ? 'Usuário reativado.' : 'Usuário desativado.');
+});
+
+document.getElementById('gSenha').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const u = usuarioAberto();
+  if (!u || !confirm('Redefinir a senha de ' + u.nome + '? As sessões abertas deste usuário serão encerradas.')) return;
+  const senha = gNovaSenha.value;
+  gNovaSenha.value = '';
+  acaoGerenciar('gSenha', 'POST', '/senha', { senha }, 'Senha redefinida. Informe a nova senha ao usuário por um canal seguro.');
+});
 
 async function iniciar() {
   const eu = await api('/api/eu');
