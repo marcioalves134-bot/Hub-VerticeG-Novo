@@ -121,6 +121,19 @@ export function editarDepartamentosUsuario(db, autor, usuarioId, departamentos) 
   })();
 }
 
+/** Administrador define nova senha para um usuário do próprio escritório; as sessões dele são encerradas. */
+export function redefinirSenha(db, autor, usuarioId, senha) {
+  const senhaHash = gerarHashSenha(senha);
+  return db.transaction(() => {
+    const alvo = db.prepare('SELECT id, login FROM usuarios WHERE id = ? AND tenant_id = ?').get(usuarioId, autor.tenant_id);
+    if (!alvo) throw new ErroDeUso('Usuário não encontrado.', 404);
+    if (alvo.id === autor.id) throw new ErroDeUso('Você não pode redefinir a própria senha por aqui.');
+    db.prepare('UPDATE usuarios SET senha_hash = ? WHERE id = ? AND tenant_id = ?').run(senhaHash, alvo.id, autor.tenant_id);
+    const sessoesEncerradas = encerrarSessoesDoUsuario(db, alvo.id, autor.tenant_id);
+    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'usuario.senha_redefinida', detalhe: { login: alvo.login, sessoesEncerradas } });
+  })();
+}
+
 export function listarUsuarios(db, tenantId) {
   const usuarios = db.prepare(`SELECT id, nome, login, perfil, ativo, criado_em FROM usuarios
     WHERE tenant_id = ? ORDER BY nome`).all(tenantId);
