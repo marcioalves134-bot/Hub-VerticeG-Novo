@@ -197,3 +197,19 @@ test('cabeçalho e Sair continuam funcionando como antes', async () => {
   assert.equal(admin.pedidos.at(-1), 'POST /api/logout');
   assert.equal(admin.location.href, '/login');
 });
+
+// --- Páginas dos módulos (Etapa 2 da Fase 1) ---
+
+test('páginas de módulo, 403 e 404: um único script, sem erro de sintaxe e com os elementos do layout', async () => {
+  const { paginaModulo, paginaSemAcesso, paginaModuloNaoEncontrado } = await import('../src/telas-modulos.js');
+  const paginas = [
+    paginaModulo({ chave: 'folha', titulo: 'Folha', departamento: 'pessoal' }, { nome: 'Pessoal (DP)', nivel: 'consulta' }),
+    paginaSemAcesso('Sem permissão para consultar o departamento Fiscal.'),
+    paginaModuloNaoEncontrado(),
+  ];
+  for (const html of paginas) {
+    assert.equal(html.match(/<script>/g).length, 1);
+    assert.doesNotThrow(() => new Function(scriptDe(html)));
+    for (const id of ['titulo', 'menuPrincipal', 'quem', 'sair']) assert.ok(html.includes(`id="${id}"`), id);
+  }
+});

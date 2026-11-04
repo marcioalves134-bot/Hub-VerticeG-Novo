@@ -84,7 +84,7 @@ document.getElementById('sair').addEventListener('click', async () => {
 `;
 
 /** Esqueleto comum das páginas logadas: cabeçalho com menu, conteúdo e um único bloco de script. */
-function paginaComLayout({ titulo, conteudo, script }) {
+export function paginaComLayout({ titulo, conteudo, script }) {
   return `<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${titulo}</title><style>${ESTILO}</style></head>

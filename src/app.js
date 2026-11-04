@@ -3,8 +3,10 @@ import { lerStatusBackup } from './backup.js';
 import { registrar } from './db.js';
 import { ErroDeUso } from './erros.js';
 import { alterarSituacaoUsuario, criarUsuario, departamentosDoUsuario, editarDepartamentosUsuario, editarUsuario, listarUsuarios, redefinirSenha } from './escritorios.js';
+import { MODULOS } from './modulos.js';
 import { exigirPermissao } from './permissoes.js';
 import { PAGINA_LOGIN, PAGINA_PAINEL } from './telas.js';
+import { paginaModulo, paginaModuloNaoEncontrado, paginaSemAcesso } from './telas-modulos.js';
 
 const COOKIE = 'hub_sessao';
 const LIMITE_CORPO = 10_000;
@@ -102,6 +104,22 @@ export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLog
       if (rota === 'GET /') {
         if (!usuario) return enviar(res, 302, '', 'text/plain', { Location: '/login' });
         return enviar(res, 200, PAGINA_PAINEL, 'text/html; charset=utf-8');
+      }
+
+      // Páginas dos módulos: acesso pela permissão do departamento do módulo, sempre no escritório da sessão.
+      const paginaDeModulo = casarRota(rota, 'GET /modulos/:chave');
+      if (paginaDeModulo) {
+        if (!usuario) return enviar(res, 302, '', 'text/plain', { Location: '/login' });
+        const modulo = MODULOS.find((m) => m.chave === paginaDeModulo.chave);
+        if (!modulo) return enviar(res, 404, paginaModuloNaoEncontrado(), 'text/html; charset=utf-8');
+        try {
+          const departamento = exigirPermissao(db, usuario, modulo.departamento, 'ler');
+          return enviar(res, 200, paginaModulo(modulo, departamento), 'text/html; charset=utf-8');
+        } catch (e) {
+          if (!(e instanceof ErroDeUso)) throw e;
+          if (e.status === 403) return enviar(res, 403, paginaSemAcesso(e.message), 'text/html; charset=utf-8');
+          return enviar(res, 404, paginaModuloNaoEncontrado(), 'text/html; charset=utf-8');
+        }
       }
       if (!url.pathname.startsWith('/api/')) return enviar(res, 404, 'Página não encontrada.', 'text/plain; charset=utf-8');
       if (!usuario) return enviar(res, 401, { erro: 'Faça login.' });
