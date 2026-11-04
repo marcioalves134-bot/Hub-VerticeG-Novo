@@ -213,3 +213,37 @@ test('páginas de módulo, 403 e 404: um único script, sem erro de sintaxe e co
     for (const id of ['titulo', 'menuPrincipal', 'quem', 'sair']) assert.ok(html.includes(`id="${id}"`), id);
   }
 });
+
+// --- Cartões do painel como atalhos (Etapa 3 da Fase 1) ---
+
+const cartoes = (elementos) => [...elementos.deps.innerHTML.matchAll(
+  /<(a|div) class="dep"(?: href="([^"]*)")?><strong>([^<]*)<\/strong><br><small>([^<]*)<\/small>(?:<br><span class="abrir">([^<]*)<\/span>)?<\/\1>/g)]
+  .map((m) => ({ tag: m[1], href: m[2] ?? null, nome: m[3], nivel: m[4], abrir: m[5] ?? null }));
+
+test('cartões: Pessoal (DP) leva à Folha e Fiscal ao Fiscal, mantendo nome e nível', async () => {
+  const { elementos } = await rodarPainel({ ...euBase, perfil: 'admin', departamentos: [
+    { chave: 'fiscal', nome: 'Fiscal', nivel: 'operacao' }, { chave: 'pessoal', nome: 'Pessoal (DP)', nivel: 'operacao' }] });
+  assert.deepEqual(cartoes(elementos), [
+    { tag: 'a', href: '/modulos/fiscal', nome: 'Fiscal', nivel: 'Operação', abrir: 'Abrir →' },
+    { tag: 'a', href: '/modulos/folha', nome: 'Pessoal (DP)', nivel: 'Operação', abrir: 'Abrir →' },
+  ]);
+});
+
+test('cartões: cada perfil vê só os seus departamentos, com o nível certo', async () => {
+  const consulta = await rodarPainel({ ...euBase, departamentos: [{ chave: 'fiscal', nome: 'Fiscal', nivel: 'consulta' }] });
+  assert.deepEqual(cartoes(consulta.elementos), [{ tag: 'a', href: '/modulos/fiscal', nome: 'Fiscal', nivel: 'Consulta', abrir: 'Abrir →' }]);
+  const operacao = await rodarPainel({ ...euBase, departamentos: [{ chave: 'pessoal', nome: 'Pessoal (DP)', nivel: 'operacao' }] });
+  assert.deepEqual(cartoes(operacao.elementos), [{ tag: 'a', href: '/modulos/folha', nome: 'Pessoal (DP)', nivel: 'Operação', abrir: 'Abrir →' }]);
+  const semDep = await rodarPainel({ ...euBase, departamentos: [] });
+  assert.equal(semDep.elementos.deps.innerHTML, '<p>Nenhum departamento liberado. Fale com o administrador.</p>');
+});
+
+test('cartões: departamento sem módulo continua cartão simples; nome vindo do banco é escapado', async () => {
+  const { elementos } = await rodarPainel({ ...euBase, departamentos: [
+    { chave: 'outro', nome: 'Outro', nivel: 'consulta' }, { chave: 'fiscal', nome: '<b>Fiscal</b>', nivel: 'consulta' }] });
+  assert.deepEqual(cartoes(elementos), [
+    { tag: 'div', href: null, nome: 'Outro', nivel: 'Consulta', abrir: null },
+    { tag: 'a', href: '/modulos/fiscal', nome: '&lt;b&gt;Fiscal&lt;/b&gt;', nivel: 'Consulta', abrir: 'Abrir →' },
+  ]);
+  assert.equal(elementos.deps.innerHTML.split('Abrir →').length - 1, 1, '"Abrir →" só no atalho');
+});

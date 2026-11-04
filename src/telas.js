@@ -23,6 +23,9 @@ const ESTILO = `
   .ok { color: #067647; font-size: 13px; min-height: 18px; margin-top: 8px; }
   .deps { display: flex; gap: 12px; flex-wrap: wrap; }
   .dep { border: 1px solid var(--borda); border-radius: 8px; padding: 12px 16px; min-width: 180px; background: #fff; }
+  a.dep { color: inherit; text-decoration: none; }
+  a.dep:hover, a.dep:focus { border-color: var(--azul); }
+  .abrir { display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--azul); }
   .grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 16px; }
   .linha-dep { display: flex; gap: 8px; align-items: center; font-size: 13px; margin-top: 6px; }
   .linha-dep select { width: auto; }
@@ -282,8 +285,13 @@ document.getElementById('gSenha').addEventListener('submit', (ev) => {
 async function iniciar() {
   const eu = await api('/api/eu');
   preencherCabecalho(eu);
-  document.getElementById('deps').innerHTML = eu.departamentos.map((d) => '<div class="dep"><strong>' + esc(d.nome)
-    + '</strong><br><small>' + NIVEIS[d.nivel] + '</small></div>').join('') || '<p>Nenhum departamento liberado. Fale com o administrador.</p>';
+  // Cartão de departamento com módulo vira atalho para ele; quem decide o acesso continua sendo o servidor.
+  document.getElementById('deps').innerHTML = eu.departamentos.map((d) => {
+    const modulo = MODULOS.find((m) => m.departamento === d.chave);
+    const conteudo = '<strong>' + esc(d.nome) + '</strong><br><small>' + NIVEIS[d.nivel] + '</small>';
+    return modulo ? '<a class="dep" href="/modulos/' + modulo.chave + '">' + conteudo + '<br><span class="abrir">Abrir →</span></a>'
+      : '<div class="dep">' + conteudo + '</div>';
+  }).join('') || '<p>Nenhum departamento liberado. Fale com o administrador.</p>';
   if (eu.perfil === 'admin') { document.getElementById('admin').hidden = false; await carregarAdmin(); }
 }
 
