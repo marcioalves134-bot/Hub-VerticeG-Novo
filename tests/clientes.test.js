@@ -332,13 +332,14 @@ test('inativar e reativar: nunca exclui, audita e recusa estado repetido', () =>
   assert.equal(linha(id).ativo, 1);
   erro(() => alterarSituacaoCliente(db, adminA, id, true), /já está ativo/);
   erro(() => alterarSituacaoCliente(db, adminA, id, 'false'), /Situação inválida/);
-  assert.deepEqual(auditoria('cliente.inativado'), [{ tenant_id: tenantA, usuario_id: adminA.id, cliente: id }]);
+  assert.deepEqual(auditoria('cliente.inativado'), [{ tenant_id: tenantA, usuario_id: adminA.id, cliente: id, servicosEncerrados: 0 }]);
   assert.deepEqual(auditoria('cliente.reativado'), [{ tenant_id: tenantA, usuario_id: adminA.id, cliente: id }]);
 });
 
 test('exclusão definitiva não existe no módulo', () => {
   const nomes = Object.keys(clientes);
-  assert.deepEqual(nomes.sort(), ['alterarSituacaoCliente', 'cadastrarCliente', 'consultarCliente', 'editarCliente', 'hojeEmBrasilia', 'listarClientes']);
+  assert.deepEqual(nomes.sort(), ['alterarSituacaoCliente', 'cadastrarCliente', 'consultarCliente', 'contratarServico', 'editarCliente',
+    'encerrarServico', 'hojeEmBrasilia', 'listarClientes', 'servicosDoCliente']);
   assert.ok(!nomes.some((n) => /exclu|apag|remov|delet/i.test(n)));
 });
 

@@ -1,6 +1,7 @@
-// Cadastro de clientes PJ e PF (docs/especificacao-clientes-e-modulos.md, seções 2, 3 e 5; etapa 7).
-// Escopo desta etapa: cadastrar, corrigir/editar, consultar, listar, inativar e reativar.
-// Serviços contratados e o encerramento automático na inativação entram na etapa 8; permissões e rotas, na etapa 9.
+// Cadastro de clientes PJ e PF e serviços contratados (docs/especificacao-clientes-e-modulos.md, seções 2, 3 e 5).
+// Etapa 7: cadastrar, corrigir/editar, consultar, listar, inativar e reativar.
+// Etapa 8: contratar, encerrar e histórico de serviços; inativar encerra os serviços em aberto na mesma transação.
+// Manutenção do catálogo, permissões e rotas: etapa 9.
 // As funções de gravação supõem que quem chama já conferiu que o autor é administrador (como em escritorios.js).
 // Toda consulta filtra pelo escritório (tenant_id). Cliente nunca é excluído. Auditoria sem CPF, CNPJ, nome de PF
 // ou código no Domínio (I-12); mensagens de erro nunca repetem o documento.
@@ -19,7 +20,7 @@ const ROTULOS = {
   inscricao_municipal: 'Inscrição municipal', tipo_estabelecimento: 'Tipo de estabelecimento', cnpj_matriz: 'CNPJ da matriz',
   contato_responsavel: 'Contato responsável', data_nascimento: 'Data de nascimento', whatsapp: 'WhatsApp', cep: 'CEP',
   logradouro: 'Logradouro', numero: 'Número', complemento: 'Complemento', bairro: 'Bairro', municipio: 'Município', uf: 'UF',
-  telefone: 'Telefone', email: 'E-mail', codigo_dominio: 'Código no Domínio',
+  telefone: 'Telefone', email: 'E-mail', codigo_dominio: 'Código no Domínio', inicio: 'Data de início', fim: 'Data de fim',
 };
 // Tamanho máximo dos campos de texto livre (proteção do banco e da tela).
 const TAMANHO_MAXIMO = {
@@ -174,15 +175,90 @@ export function editarCliente(db, autor, clienteId, dados, agora = new Date()) {
   })();
 }
 
-/** Inativa (ativo = false) ou reativa (ativo = true). Nunca exclui. Serviços em aberto: encerramento entra na etapa 8. */
-export function alterarSituacaoCliente(db, autor, clienteId, ativo) {
+/**
+ * Inativa (ativo = false) ou reativa (ativo = true). Nunca exclui.
+ * Inativar encerra, na mesma transação, todos os serviços em aberto com a data de hoje (Brasília) — A-9, I-7.
+ * Reativar não reabre serviços (I-13).
+ */
+export function alterarSituacaoCliente(db, autor, clienteId, ativo, agora = new Date()) {
   if (typeof ativo !== 'boolean') throw new ErroDeUso('Situação inválida.');
   return db.transaction(() => {
     const atual = buscarDoEscritorio(db, autor.tenant_id, clienteId);
     if (Boolean(atual.ativo) === ativo) throw new ErroDeUso(ativo ? 'O cliente já está ativo.' : 'O cliente já está inativo.');
     db.prepare("UPDATE clientes SET ativo = ?, atualizado_em = datetime('now') WHERE id = ? AND tenant_id = ?").run(ativo ? 1 : 0, atual.id, autor.tenant_id);
-    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: ativo ? 'cliente.reativado' : 'cliente.inativado', detalhe: { cliente: atual.id } });
+    if (ativo) {
+      registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'cliente.reativado', detalhe: { cliente: atual.id } });
+      return;
+    }
+    const servicosEncerrados = db.prepare('UPDATE cliente_servicos SET fim = ? WHERE tenant_id = ? AND cliente_id = ? AND fim IS NULL')
+      .run(hojeEmBrasilia(agora), autor.tenant_id, atual.id).changes;
+    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'cliente.inativado', detalhe: { cliente: atual.id, servicosEncerrados } });
   })();
+}
+
+// --- Serviços contratados (etapa 8) ---
+
+function conferirDados(dados, permitidos) {
+  if (dados == null || typeof dados !== 'object' || Array.isArray(dados)) throw new ErroDeUso('Dados inválidos.');
+  for (const campo of Object.keys(dados)) if (!permitidos.includes(campo)) throw new ErroDeUso(`Campo desconhecido: ${campo}`);
+}
+
+function dataObrigatoria(campo, valor, agora) {
+  const data = dataValida(campo, valor, agora);
+  if (data == null) throw new ErroDeUso(`Informe a ${ROTULOS[campo].toLowerCase()}.`);
+  return data;
+}
+
+/**
+ * Contrata um serviço do catálogo do escritório para o cliente: cliente ativo; serviço existente, ativo e do mesmo
+ * tipo do cliente; sem o mesmo serviço em aberto (I-8); início não futuro (I-7). Devolve o número da contratação.
+ */
+export function contratarServico(db, autor, clienteId, dados, agora = new Date()) {
+  conferirDados(dados, ['servico', 'inicio']);
+  if (typeof dados.servico !== 'string' || !dados.servico.trim()) throw new ErroDeUso('Informe o serviço.');
+  const inicio = dataObrigatoria('inicio', dados.inicio, agora);
+  return db.transaction(() => {
+    const cliente = buscarDoEscritorio(db, autor.tenant_id, clienteId);
+    if (!cliente.ativo) throw new ErroDeUso('Cliente inativo não pode contratar serviço.');
+    const servico = db.prepare('SELECT id, chave, nome, tipo_cliente, ativo FROM servicos WHERE tenant_id = ? AND chave = ?')
+      .get(autor.tenant_id, dados.servico.trim());
+    if (!servico) throw new ErroDeUso('Serviço não encontrado no catálogo do escritório.');
+    if (!servico.ativo) throw new ErroDeUso(`O serviço ${servico.nome} está inativo no catálogo.`);
+    if (servico.tipo_cliente !== cliente.tipo) {
+      throw new ErroDeUso(`O serviço ${servico.nome} é só para ${servico.tipo_cliente === 'PJ' ? 'pessoa jurídica' : 'pessoa física'}.`);
+    }
+    const aberto = db.prepare('SELECT 1 FROM cliente_servicos WHERE tenant_id = ? AND cliente_id = ? AND servico_id = ? AND fim IS NULL')
+      .get(autor.tenant_id, cliente.id, servico.id);
+    if (aberto) throw new ErroDeUso(`O serviço ${servico.nome} já está em aberto para este cliente.`);
+    const id = Number(db.prepare('INSERT INTO cliente_servicos (tenant_id, cliente_id, servico_id, inicio) VALUES (?, ?, ?, ?)')
+      .run(autor.tenant_id, cliente.id, servico.id, inicio).lastInsertRowid);
+    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'servico.contratado', detalhe: { cliente: cliente.id, servico: servico.chave, inicio } });
+    return id;
+  })();
+}
+
+/** Encerra uma contratação em aberto do cliente: fim ≥ início e não futuro. Nada é apagado. */
+export function encerrarServico(db, autor, clienteId, contratoId, dados, agora = new Date()) {
+  conferirDados(dados, ['fim']);
+  const fim = dataObrigatoria('fim', dados.fim, agora);
+  return db.transaction(() => {
+    const cliente = buscarDoEscritorio(db, autor.tenant_id, clienteId);
+    const contrato = db.prepare(`SELECT cs.id, cs.inicio, cs.fim, s.chave FROM cliente_servicos cs JOIN servicos s ON s.id = cs.servico_id
+      WHERE cs.id = ? AND cs.cliente_id = ? AND cs.tenant_id = ?`).get(contratoId, cliente.id, autor.tenant_id);
+    if (!contrato) throw new ErroDeUso('Contratação não encontrada.', 404);
+    if (contrato.fim != null) throw new ErroDeUso('Esta contratação já está encerrada.');
+    if (fim < contrato.inicio) throw new ErroDeUso('A data de fim não pode ser anterior à data de início.');
+    db.prepare('UPDATE cliente_servicos SET fim = ? WHERE id = ? AND tenant_id = ?').run(fim, contrato.id, autor.tenant_id);
+    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'servico.encerrado', detalhe: { cliente: cliente.id, servico: contrato.chave, fim } });
+  })();
+}
+
+/** Serviços do cliente do escritório: em aberto e histórico de encerrados (mais recentes primeiro). */
+export function servicosDoCliente(db, tenantId, clienteId) {
+  const cliente = buscarDoEscritorio(db, tenantId, clienteId);
+  const contratos = db.prepare(`SELECT cs.id AS contrato, s.chave AS servico, s.nome, cs.inicio, cs.fim FROM cliente_servicos cs
+    JOIN servicos s ON s.id = cs.servico_id WHERE cs.tenant_id = ? AND cs.cliente_id = ? ORDER BY cs.inicio DESC, cs.id DESC`).all(tenantId, cliente.id);
+  return { abertos: contratos.filter((c) => c.fim == null), encerrados: contratos.filter((c) => c.fim != null) };
 }
 
 /** Detalhe do cliente do escritório, com a matriz (se cadastrada no Hub) e as filiais cadastradas. */
