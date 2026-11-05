@@ -1,7 +1,7 @@
 // Cadastro de clientes PJ e PF e serviços contratados (docs/especificacao-clientes-e-modulos.md, seções 2, 3 e 5).
 // Etapa 7: cadastrar, corrigir/editar, consultar, listar, inativar e reativar.
 // Etapa 8: contratar, encerrar e histórico de serviços; inativar encerra os serviços em aberto na mesma transação.
-// Manutenção do catálogo, permissões e rotas: etapa 9.
+// Etapa 9: filtro por serviço na lista e manutenção do catálogo (I-10). Permissões e rotas ficam em permissoes.js e app.js.
 // As funções de gravação supõem que quem chama já conferiu que o autor é administrador (como em escritorios.js).
 // Toda consulta filtra pelo escritório (tenant_id). Cliente nunca é excluído. Auditoria sem CPF, CNPJ, nome de PF
 // ou código no Domínio (I-12); mensagens de erro nunca repetem o documento.
@@ -273,16 +273,23 @@ export function consultarCliente(db, tenantId, clienteId) {
 }
 
 /**
- * Lista os clientes do escritório: filtro por tipo e situação ('ativos' — padrão —, 'inativos' ou 'todos'),
- * busca por nome ou documento (máscara ignorada; % e _ valem como texto) e páginas de 100.
+ * Lista os clientes do escritório: filtro por tipo, por serviço em aberto (chave do catálogo) e por situação
+ * ('ativos' — padrão —, 'inativos' ou 'todos'), busca por nome ou documento (máscara ignorada; % e _ valem como texto)
+ * e páginas de 100.
  */
-export function listarClientes(db, tenantId, { tipo, situacao = 'ativos', busca, pagina = 1 } = {}) {
+export function listarClientes(db, tenantId, { tipo, servico, situacao = 'ativos', busca, pagina = 1 } = {}) {
   const condicoes = ['tenant_id = ?'];
   const params = [tenantId];
   if (tipo != null) {
     if (!['PJ', 'PF'].includes(tipo)) throw new ErroDeUso('Tipo inválido.');
     condicoes.push('tipo = ?');
     params.push(tipo);
+  }
+  if (servico != null) {
+    if (typeof servico !== 'string' || !servico.trim()) throw new ErroDeUso('Serviço inválido.');
+    condicoes.push(`EXISTS (SELECT 1 FROM cliente_servicos cs JOIN servicos s ON s.id = cs.servico_id
+      WHERE cs.tenant_id = clientes.tenant_id AND cs.cliente_id = clientes.id AND cs.fim IS NULL AND s.chave = ?)`);
+    params.push(servico.trim());
   }
   if (!['ativos', 'inativos', 'todos'].includes(situacao)) throw new ErroDeUso('Situação inválida.');
   if (situacao !== 'todos') condicoes.push(`ativo = ${situacao === 'ativos' ? 1 : 0}`);
@@ -303,4 +310,71 @@ export function listarClientes(db, tenantId, { tipo, situacao = 'ativos', busca,
   const itens = db.prepare(`SELECT id, tipo, documento, nome, nome_fantasia, tipo_estabelecimento, municipio, uf, ativo FROM clientes
     WHERE ${onde} ORDER BY nome, id LIMIT ? OFFSET ?`).all(...params, POR_PAGINA, (pagina - 1) * POR_PAGINA);
   return { itens, total, pagina, porPagina: POR_PAGINA };
+}
+
+// --- Catálogo de serviços (I-10, etapa 9) ---
+// Administrador cria, renomeia, inativa e reativa serviços do próprio escritório. Serviço nunca é excluído.
+// A chave não muda depois de criada; o tipo de cliente não muda depois de haver contratações.
+
+const CHAVE_SERVICO = /^[a-z0-9_-]{2,30}$/;
+const NOME_SERVICO_MAXIMO = 60;
+
+function nomeServico(valor) {
+  if (typeof valor !== 'string' || !valor.trim()) throw new ErroDeUso('Informe o nome do serviço.');
+  const nome = valor.trim();
+  if (nome.length > NOME_SERVICO_MAXIMO) throw new ErroDeUso(`Nome do serviço: no máximo ${NOME_SERVICO_MAXIMO} caracteres.`);
+  return nome;
+}
+
+function tipoClienteServico(valor) {
+  if (!['PJ', 'PF'].includes(valor)) throw new ErroDeUso('Tipo de cliente do serviço: PJ ou PF.');
+  return valor;
+}
+
+/** Catálogo do escritório, inclusive serviços inativos. */
+export function listarCatalogo(db, tenantId) {
+  return db.prepare('SELECT id, chave, nome, tipo_cliente, ativo FROM servicos WHERE tenant_id = ? ORDER BY nome, id').all(tenantId);
+}
+
+/** Cria um serviço no catálogo do escritório de quem pede. Devolve o número do serviço. */
+export function criarServicoCatalogo(db, autor, dados) {
+  conferirDados(dados, ['chave', 'nome', 'tipo_cliente']);
+  const chave = typeof dados.chave === 'string' ? dados.chave.trim() : '';
+  if (!CHAVE_SERVICO.test(chave)) throw new ErroDeUso('Chave do serviço: 2 a 30 caracteres, só letras minúsculas, números, hífen ou sublinhado.');
+  const nome = nomeServico(dados.nome);
+  const tipo = tipoClienteServico(dados.tipo_cliente);
+  return db.transaction(() => {
+    if (db.prepare('SELECT 1 FROM servicos WHERE tenant_id = ? AND chave = ?').get(autor.tenant_id, chave)) {
+      throw new ErroDeUso('Já existe serviço com esta chave no catálogo do escritório.');
+    }
+    const id = Number(db.prepare('INSERT INTO servicos (tenant_id, chave, nome, tipo_cliente) VALUES (?, ?, ?, ?)')
+      .run(autor.tenant_id, chave, nome, tipo).lastInsertRowid);
+    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'catalogo.servico_criado',
+      detalhe: { servico: chave, campos: ['chave', 'nome', 'tipo_cliente'] } });
+    return id;
+  })();
+}
+
+/** Renomeia, muda o tipo de cliente (só sem contratações) ou inativa/reativa um serviço do catálogo. Sem mudança, não grava. */
+export function editarServicoCatalogo(db, autor, servicoId, dados) {
+  conferirDados(dados, ['nome', 'tipo_cliente', 'ativo']);
+  return db.transaction(() => {
+    const atual = db.prepare('SELECT * FROM servicos WHERE id = ? AND tenant_id = ?').get(servicoId, autor.tenant_id);
+    if (!atual) throw new ErroDeUso('Serviço não encontrado.', 404);
+    const novo = { nome: atual.nome, tipo_cliente: atual.tipo_cliente, ativo: atual.ativo };
+    if (Object.hasOwn(dados, 'nome')) novo.nome = nomeServico(dados.nome);
+    if (Object.hasOwn(dados, 'tipo_cliente')) novo.tipo_cliente = tipoClienteServico(dados.tipo_cliente);
+    if (Object.hasOwn(dados, 'ativo')) {
+      if (typeof dados.ativo !== 'boolean') throw new ErroDeUso('Situação do serviço inválida.');
+      novo.ativo = dados.ativo ? 1 : 0;
+    }
+    const campos = ['nome', 'tipo_cliente', 'ativo'].filter((c) => novo[c] !== atual[c]);
+    if (!campos.length) return;
+    if (campos.includes('tipo_cliente') && db.prepare('SELECT 1 FROM cliente_servicos WHERE servico_id = ? AND tenant_id = ? LIMIT 1').get(atual.id, autor.tenant_id)) {
+      throw new ErroDeUso('O tipo de cliente do serviço não pode mudar: o serviço já tem contratações.');
+    }
+    db.prepare(`UPDATE servicos SET ${campos.map((c) => `${c} = ?`).join(', ')} WHERE id = ? AND tenant_id = ?`)
+      .run(...campos.map((c) => novo[c]), atual.id, autor.tenant_id);
+    registrar(db, { tenantId: autor.tenant_id, usuarioId: autor.id, acao: 'catalogo.servico_editado', detalhe: { servico: atual.chave, campos } });
+  })();
 }

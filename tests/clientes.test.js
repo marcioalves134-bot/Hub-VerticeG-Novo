@@ -338,8 +338,8 @@ test('inativar e reativar: nunca exclui, audita e recusa estado repetido', () =>
 
 test('exclusão definitiva não existe no módulo', () => {
   const nomes = Object.keys(clientes);
-  assert.deepEqual(nomes.sort(), ['alterarSituacaoCliente', 'cadastrarCliente', 'consultarCliente', 'contratarServico', 'editarCliente',
-    'encerrarServico', 'hojeEmBrasilia', 'listarClientes', 'servicosDoCliente']);
+  assert.deepEqual(nomes.sort(), ['alterarSituacaoCliente', 'cadastrarCliente', 'consultarCliente', 'contratarServico', 'criarServicoCatalogo',
+    'editarCliente', 'editarServicoCatalogo', 'encerrarServico', 'hojeEmBrasilia', 'listarCatalogo', 'listarClientes', 'servicosDoCliente']);
   assert.ok(!nomes.some((n) => /exclu|apag|remov|delet/i.test(n)));
 });
 

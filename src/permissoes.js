@@ -28,3 +28,21 @@ export function exigirPermissao(db, usuario, chave, acao) {
   }
   return { id: dep.id, chave: dep.chave, nome: dep.nome, nivel };
 }
+
+/**
+ * Consulta de clientes (A-8): administrador, ou usuário com pelo menos um departamento liberado no próprio escritório
+ * (vínculo com departamento de outro escritório não conta). Não registra nada; lido do banco a cada chamada.
+ * Só usa tabelas que já existem na versão 0.
+ */
+export function podeConsultarClientes(db, usuario) {
+  if (usuario.perfil === 'admin') return true;
+  return Boolean(db.prepare(`SELECT 1 FROM usuario_departamentos ud JOIN departamentos d ON d.id = ud.departamento_id
+    WHERE ud.usuario_id = ? AND d.tenant_id = ? LIMIT 1`).get(usuario.id, usuario.tenant_id));
+}
+
+/** Exige a permissão de consulta de clientes; negada, registra no histórico e lança erro 403. */
+export function exigirConsultaClientes(db, usuario) {
+  if (podeConsultarClientes(db, usuario)) return;
+  registrar(db, { tenantId: usuario.tenant_id, usuarioId: usuario.id, acao: 'permissao.negada', detalhe: { recurso: 'clientes' } });
+  throw new ErroDeUso('Sem permissão para consultar clientes.', 403);
+}

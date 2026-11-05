@@ -2,12 +2,21 @@ import { conferirSenha, criarLimitador, criarSessao, encerrarSessao, usuarioDaSe
 import { lerStatusBackup } from './backup.js';
 import { registrar } from './db.js';
 import { ErroDeUso } from './erros.js';
+import {
+  alterarSituacaoCliente, cadastrarCliente, consultarCliente, contratarServico, criarServicoCatalogo, editarCliente, editarServicoCatalogo,
+  encerrarServico, listarCatalogo, listarClientes, servicosDoCliente,
+} from './clientes.js';
 import { alterarSituacaoUsuario, criarUsuario, departamentosDoUsuario, editarDepartamentosUsuario, editarUsuario, listarUsuarios, redefinirSenha } from './escritorios.js';
 import { MODULOS } from './modulos.js';
 import { versaoDoBanco, VERSAO_ATUAL } from './migracoes.js';
-import { exigirPermissao } from './permissoes.js';
+import { exigirConsultaClientes, exigirPermissao, podeConsultarClientes } from './permissoes.js';
 import { PAGINA_LOGIN, PAGINA_PAINEL } from './telas.js';
 import { paginaModulo, paginaModuloNaoEncontrado, paginaSemAcesso } from './telas-modulos.js';
+
+// Caminhos que dependem das tabelas da migração 001 (clientes, servicos, cliente_servicos). Toda rota ou tela nova
+// que use essas tabelas tem de estar aqui: na versão 0 eles respondem 404 antes de qualquer consulta (barreira M2).
+export const CAMINHOS_CLIENTES = ['/clientes', '/api/clientes', '/api/servicos'];
+const ehCaminhoDeClientes = (caminho) => CAMINHOS_CLIENTES.some((c) => caminho === c || caminho.startsWith(`${c}/`));
 
 const COOKIE = 'hub_sessao';
 const LIMITE_CORPO = 10_000;
@@ -103,6 +112,14 @@ export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLog
         return enviar(res, 200, { ok: true }, undefined, { 'Set-Cookie': `${COOKIE}=${token}; ${atributosCookie}; Max-Age=${sessaoHoras * 3600}` });
       }
 
+      // Barreira de disponibilidade (M2): banco na versão 0 → Clientes não existe; 404 igual ao de rota inexistente,
+      // antes de qualquer verificação de permissão ou consulta, sem auditoria.
+      if (!recursos.clientes && ehCaminhoDeClientes(url.pathname)) {
+        return url.pathname.startsWith('/api/')
+          ? enviar(res, 404, { erro: 'Rota não encontrada.' })
+          : enviar(res, 404, 'Página não encontrada.', 'text/plain; charset=utf-8');
+      }
+
       const token = lerCookie(req);
       const usuario = usuarioDaSessao(db, token);
 
@@ -134,7 +151,11 @@ export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLog
         registrar(db, { tenantId: usuario.tenant_id, usuarioId: usuario.id, acao: 'logout' });
         return enviar(res, 200, { ok: true }, undefined, { 'Set-Cookie': `${COOKIE}=; ${atributosCookie}; Max-Age=0` });
       }
-      if (rota === 'GET /api/eu') return enviar(res, 200, { ...usuario, departamentos: departamentosDoUsuario(db, usuario) });
+      if (rota === 'GET /api/eu') {
+        // M3: o menu mostra "Clientes" só se o recurso existir (versão 1) e o usuário puder consultar.
+        return enviar(res, 200, { ...usuario, departamentos: departamentosDoUsuario(db, usuario),
+          podeConsultarClientes: recursos.clientes && podeConsultarClientes(db, usuario) });
+      }
 
       // Rotas de departamento (/api/dep/:chave/...): toda chamada passa pela permissão antes de qualquer tratador.
       if (url.pathname.startsWith('/api/dep/')) {
@@ -146,8 +167,55 @@ export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLog
         return enviar(res, 404, { erro: 'Rota não encontrada.' });
       }
 
+      // Consulta de clientes e do catálogo (A-8): administrador ou usuário com algum departamento liberado.
+      if (rota === 'GET /api/clientes') {
+        exigirConsultaClientes(db, usuario);
+        const q = (nome) => { const v = url.searchParams.get(nome); return v === null || v === '' ? undefined : v; };
+        const pagina = q('pagina');
+        if (pagina !== undefined && !/^\d{1,6}$/.test(pagina)) throw new ErroDeUso('Página inválida.');
+        return enviar(res, 200, listarClientes(db, usuario.tenant_id, {
+          tipo: q('tipo'), servico: q('servico'), situacao: q('situacao'), busca: q('busca'), pagina: pagina === undefined ? undefined : Number(pagina),
+        }));
+      }
+      const detalheCliente = casarRota(rota, 'GET /api/clientes/:id');
+      if (detalheCliente) {
+        exigirConsultaClientes(db, usuario);
+        return enviar(res, 200, { ...consultarCliente(db, usuario.tenant_id, detalheCliente.id), servicos: servicosDoCliente(db, usuario.tenant_id, detalheCliente.id) });
+      }
+      if (rota === 'GET /api/servicos') {
+        exigirConsultaClientes(db, usuario);
+        return enviar(res, 200, listarCatalogo(db, usuario.tenant_id));
+      }
+
       // Daqui para baixo, só administrador do próprio escritório.
       if (usuario.perfil !== 'admin') return enviar(res, 403, { erro: 'Acesso só para administrador.' });
+
+      // Clientes, serviços contratados e catálogo: gravação só pelo administrador (A-8, I-2, I-10).
+      if (rota === 'POST /api/clientes') return enviar(res, 201, { id: cadastrarCliente(db, usuario, await lerJson(req)) });
+      const edicaoCliente = casarRota(rota, 'PUT /api/clientes/:id');
+      if (edicaoCliente) {
+        editarCliente(db, usuario, edicaoCliente.id, await lerJson(req));
+        return enviar(res, 200, { ok: true });
+      }
+      const situacaoCliente = casarRota(rota, 'POST /api/clientes/:id/situacao');
+      if (situacaoCliente) {
+        const { ativo } = await lerJson(req);
+        alterarSituacaoCliente(db, usuario, situacaoCliente.id, ativo);
+        return enviar(res, 200, { ok: true });
+      }
+      const contratacao = casarRota(rota, 'POST /api/clientes/:id/servicos');
+      if (contratacao) return enviar(res, 201, { contrato: contratarServico(db, usuario, contratacao.id, await lerJson(req)) });
+      const encerramento = casarRota(rota, 'POST /api/clientes/:id/servicos/:contrato/encerrar');
+      if (encerramento) {
+        encerrarServico(db, usuario, encerramento.id, encerramento.contrato, await lerJson(req));
+        return enviar(res, 200, { ok: true });
+      }
+      if (rota === 'POST /api/servicos') return enviar(res, 201, { id: criarServicoCatalogo(db, usuario, await lerJson(req)) });
+      const edicaoServico = casarRota(rota, 'PUT /api/servicos/:id');
+      if (edicaoServico) {
+        editarServicoCatalogo(db, usuario, edicaoServico.id, await lerJson(req));
+        return enviar(res, 200, { ok: true });
+      }
       if (rota === 'GET /api/usuarios') return enviar(res, 200, listarUsuarios(db, usuario.tenant_id));
       if (rota === 'POST /api/usuarios') {
         const id = criarUsuario(db, usuario, await lerJson(req));
