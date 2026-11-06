@@ -122,6 +122,56 @@ test('a permissão de consulta é lida a cada pedido: liberar um departamento pa
   assert.equal((await pedir('semdep', 'GET', '/api/clientes')).status, 200);
 });
 
+// --- Página /clientes (etapa 10): login e permissão de consulta conferidos no servidor, inclusive por URL direta ---
+
+async function pedirPagina(quem, caminho) {
+  const r = await fetch(`${base}${caminho}`, { headers: { Cookie: quem ? cookies[quem] : '' }, redirect: 'manual' });
+  return { status: r.status, tipo: r.headers.get('content-type'), local: r.headers.get('location'), texto: await r.text() };
+}
+
+test('página /clientes: sem login vai para o login, mesmo com endereço de detalhe', async () => {
+  for (const caminho of ['/clientes', '/clientes?id=1']) {
+    const r = await pedirPagina(null, caminho);
+    assert.equal(r.status, 302, caminho);
+    assert.equal(r.local, '/login');
+    assert.ok(!r.texto.includes('secLista'));
+  }
+});
+
+test('página /clientes: administrador e usuário com departamento recebem a tela (cada um no seu escritório)', async () => {
+  for (const quem of ['admin', 'consulta', 'adminB']) {
+    for (const caminho of ['/clientes', '/clientes?id=1']) {
+      const r = await pedirPagina(quem, caminho);
+      assert.equal(r.status, 200, `${quem} ${caminho}`);
+      assert.match(r.tipo, /^text\/html/);
+      assert.ok(r.texto.includes('id="secLista"') && r.texto.includes('<title>Clientes — Hub Vértice G</title>'));
+    }
+  }
+  assert.equal(auditoria('permissao.negada').length, 0);
+});
+
+test('página /clientes: sem permissão de consulta, 403 em HTML com registro, também por URL direta; nada da tela é entregue', async () => {
+  for (const caminho of ['/clientes', '/clientes?id=1']) {
+    const r = await pedirPagina('semdep', caminho);
+    assert.equal(r.status, 403, caminho);
+    assert.match(r.tipo, /^text\/html/);
+    assert.ok(r.texto.includes('Sem acesso a Clientes') && r.texto.includes('Sem permissão para consultar clientes.'));
+    assert.ok(!r.texto.includes('secLista') && !r.texto.includes('/api/clientes'), 'a página da tela não é entregue');
+  }
+  assert.deepEqual(auditoria('permissao.negada'), [1, 2].map(() => ({ tenant_id: tenantA, usuario_id: ids.semdep, recurso: 'clientes' })));
+  // vínculo com departamento de outro escritório não libera a página
+  const fiscalB = db.prepare("SELECT id FROM departamentos WHERE tenant_id = ? AND chave = 'fiscal'").get(tenantB).id;
+  db.prepare("INSERT INTO usuario_departamentos (usuario_id, departamento_id, nivel) VALUES (?, ?, 'operacao')").run(ids.semdep, fiscalB);
+  assert.equal((await pedirPagina('semdep', '/clientes')).status, 403);
+  // liberar um departamento do próprio escritório vale na hora
+  await pedir('admin', 'PUT', `/api/usuarios/${ids.semdep}/departamentos`, { departamentos: [{ chave: 'pessoal', nivel: 'consulta' }] });
+  assert.equal((await pedirPagina('semdep', '/clientes')).status, 200);
+});
+
+test('página /clientes: só o caminho exato; /clientes/ e /clientes/1 continuam 404', async () => {
+  for (const caminho of ['/clientes/', '/clientes/1']) assert.equal((await pedirPagina('admin', caminho)).status, 404, caminho);
+});
+
 // --- Clientes pela API ---
 
 test('cadastro, detalhe (com serviços, matriz e filiais), edição e situação pela API', async () => {
@@ -366,6 +416,7 @@ test('versão 0 → migrada: depois da migração e de reabrir o Hub, as rotas p
   await desmontar();
   await montar(v0);
   assert.equal((await pedir('admin', 'GET', '/api/clientes')).status, 404);
+  assert.equal((await pedirPagina('admin', '/clientes')).status, 404);
   aplicarMigracao001(db);
   // "reabrir o Hub": nova aplicação sobre o mesmo banco
   await new Promise((ok) => servidor.close(ok));
@@ -376,4 +427,7 @@ test('versão 0 → migrada: depois da migração e de reabrir o Hub, as rotas p
   assert.equal((await pedir('consulta', 'GET', '/api/servicos')).status, 200);
   assert.equal((await pedir('semdep', 'GET', '/api/clientes')).status, 403);
   assert.equal((await pedir('admin', 'GET', '/api/eu')).json.podeConsultarClientes, true);
+  assert.equal((await pedirPagina('admin', '/clientes')).status, 200);
+  assert.equal((await pedirPagina('consulta', '/clientes')).status, 200);
+  assert.equal((await pedirPagina('semdep', '/clientes')).status, 403);
 });

@@ -31,10 +31,10 @@ export function paginaModulo(modulo, departamento) {
   </section>`);
 }
 
-/** Acesso negado (403). A mensagem vem de exigirPermissao. */
-export function paginaSemAcesso(mensagem) {
+/** Acesso negado (403). A mensagem vem de exigirPermissao (ou de exigirConsultaClientes, com outro título). */
+export function paginaSemAcesso(mensagem, titulo = 'Sem acesso a este módulo') {
   return pagina('Sem acesso', `
-  <section class="cartao"><h2>Sem acesso a este módulo</h2>
+  <section class="cartao"><h2>${esc(titulo)}</h2>
     <p>${esc(mensagem)}</p>
     <p class="dica">Se precisar deste acesso, fale com o administrador do escritório.</p>
   </section>`);

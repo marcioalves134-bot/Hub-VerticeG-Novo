@@ -11,6 +11,7 @@ import { MODULOS } from './modulos.js';
 import { versaoDoBanco, VERSAO_ATUAL } from './migracoes.js';
 import { exigirConsultaClientes, exigirPermissao, podeConsultarClientes } from './permissoes.js';
 import { PAGINA_LOGIN, PAGINA_PAINEL } from './telas.js';
+import { PAGINA_CLIENTES } from './telas-clientes.js';
 import { paginaModulo, paginaModuloNaoEncontrado, paginaSemAcesso } from './telas-modulos.js';
 
 // Caminhos que dependem das tabelas da migração 001 (clientes, servicos, cliente_servicos). Toda rota ou tela nova
@@ -142,6 +143,17 @@ export function criarApp(db, { sessaoHoras = 10, cookieSeguro = false, backupLog
           if (e.status === 403) return enviar(res, 403, paginaSemAcesso(e.message), 'text/html; charset=utf-8');
           return enviar(res, 404, paginaModuloNaoEncontrado(), 'text/html; charset=utf-8');
         }
+      }
+      // Tela de Clientes: login e permissão de consulta (A-8) conferidos no servidor, inclusive no acesso direto pela URL.
+      if (rota === 'GET /clientes') {
+        if (!usuario) return enviar(res, 302, '', 'text/plain', { Location: '/login' });
+        try {
+          exigirConsultaClientes(db, usuario);
+        } catch (e) {
+          if (!(e instanceof ErroDeUso)) throw e;
+          return enviar(res, e.status, paginaSemAcesso(e.message, 'Sem acesso a Clientes'), 'text/html; charset=utf-8');
+        }
+        return enviar(res, 200, PAGINA_CLIENTES, 'text/html; charset=utf-8');
       }
       if (!url.pathname.startsWith('/api/')) return enviar(res, 404, 'Página não encontrada.', 'text/plain; charset=utf-8');
       if (!usuario) return enviar(res, 401, { erro: 'Faça login.' });
